@@ -3,7 +3,7 @@ import {
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
-  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle
+  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle
 } from 'lucide-react';
 
 // --- IMPORTACIONES DE FIREBASE ---
@@ -57,6 +57,7 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
     danger: "bg-red-600 hover:bg-red-500 text-white",
     outline: "bg-transparent border-2 border-purple-500 text-purple-400 hover:bg-purple-500/10",
     success: "bg-green-600 hover:bg-green-500 text-white",
+    whatsapp: "bg-green-500 hover:bg-green-400 text-white shadow-lg shadow-green-900/20",
     ghost: "bg-transparent hover:bg-slate-800 text-slate-300"
   };
   return <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
@@ -103,6 +104,7 @@ export default function App() {
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
   const [permissionError, setPermissionError] = useState(false); 
+  const [lastOrderId, setLastOrderId] = useState(null); // Para mostrar en success
   
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]); 
@@ -113,58 +115,45 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   
-  const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
+  // Formulario extendido con teléfono
+  const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
 
   const wrapperRef = useRef(null);
 
   // --- MANEJO DE HISTORIAL (BACK BUTTON) ---
   useEffect(() => {
-    // Escuchar el evento popstate (cuando el usuario da click a Atrás en el navegador)
     const handlePopState = (event) => {
-      // Si tenemos una carta seleccionada y el usuario da atrás, cerramos el modal
       if (selectedCard) {
         setSelectedCard(null);
       }
     };
-
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [selectedCard]);
 
-  // Funciones auxiliares para abrir/cerrar modal interactuando con el historial
   const openCardModal = (card) => {
-    // Agregamos un estado al historial para que el botón "Atrás" funcione
     window.history.pushState({ cardId: card.id }, '', `#${card.id}`);
     setSelectedCard(card);
   };
 
   const closeCardModal = () => {
-    // Al cerrar manualmente, retrocedemos en el historial para quitar el hash de la URL
-    // Esto disparará 'popstate', que a su vez pondrá selectedCard en null
     window.history.back();
   };
 
-  // Función para ir al Home y resetear todo
   const goHome = () => {
-    if (selectedCard) {
-      setSelectedCard(null);
-      // Limpiar hash si existe
-      if (window.location.hash) {
-         window.history.replaceState(null, '', ' ');
-      }
-    }
+    if (selectedCard) setSelectedCard(null);
+    if (window.location.hash) window.history.replaceState(null, '', ' ');
     setView('store');
     setQuery('');
     fetchCards('format:commander year>=2023', false);
   };
 
-  // --- SINCRONIZACIÓN FIREBASE (BLINDADA) ---
+  // --- SINCRONIZACIÓN FIREBASE ---
 
   // 1. Autenticación
   useEffect(() => {
     if (!auth) return;
-
     let unsubscribe;
     try {
       unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -187,19 +176,13 @@ export default function App() {
           setUser(null);
         }
       });
-    } catch (e) {
-      console.error("Error en auth listener:", e);
-    }
-
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
+    } catch (e) { console.error("Error en auth listener:", e); }
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
 
   // 2. Inventario
   useEffect(() => {
     if (!db) return;
-
     let unsubscribe;
     try {
       const q = collection(db, "inventory");
@@ -212,19 +195,13 @@ export default function App() {
         console.error("Error inventario:", error);
         if (error.code === 'permission-denied') setPermissionError(true);
       });
-    } catch (e) {
-      console.error("Error creando listener de inventario:", e);
-    }
-
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
+    } catch (e) { console.error("Error creando listener de inventario:", e); }
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
 
   // 3. Órdenes
   useEffect(() => {
     if (!db || !user) return;
-
     let unsubscribe;
     try {
       const q = query(collection(db, "orders"), orderBy("date", "desc"));
@@ -234,7 +211,6 @@ export default function App() {
           ...doc.data(),
           date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
         }));
-        
         if (user.role === 'admin') {
           setOrders(allOrders);
         } else {
@@ -243,16 +219,10 @@ export default function App() {
       }, (error) => {
         if (error.code === 'permission-denied') setPermissionError(true);
       });
-    } catch (e) {
-      console.error("Error creando listener de ordenes:", e);
-    }
-
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
+    } catch (e) { console.error("Error creando listener de ordenes:", e); }
+    return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [user]);
 
-  // Carga inicial de cartas
   useEffect(() => {
     fetchCards('format:commander year>=2023', false);
     const handleClickOutside = (event) => {
@@ -293,10 +263,7 @@ export default function App() {
 
   const handleAuth = async (e) => {
     e.preventDefault();
-    if (!auth) {
-      setAuthForm({ ...authForm, error: "Firebase no está listo." });
-      return;
-    }
+    if (!auth) { setAuthForm({ ...authForm, error: "Firebase no está listo." }); return; }
     setAuthForm({ ...authForm, error: '' });
     try {
       if (authForm.isRegister) {
@@ -317,8 +284,6 @@ export default function App() {
       let msg = "Error desconocido.";
       if (error.code === 'auth/email-already-in-use') msg = "Correo ya registrado.";
       if (error.code === 'auth/wrong-password') msg = "Contraseña incorrecta.";
-      if (error.code === 'auth/invalid-credential') msg = "Datos incorrectos.";
-      if (error.code === 'auth/weak-password') msg = "Contraseña muy débil (min 6 chars).";
       setAuthForm({ ...authForm, error: msg });
     }
   };
@@ -340,15 +305,22 @@ export default function App() {
       }
 
       const orderRef = doc(collection(db, "orders"));
-      batch.set(orderRef, {
+      const newOrder = {
         date: serverTimestamp(),
-        buyer: { ...checkoutForm, uid: user?.uid || 'guest', email: user?.email || checkoutForm.email },
+        buyer: { 
+          ...checkoutForm, 
+          uid: user?.uid || 'guest', 
+          email: user?.email || checkoutForm.email 
+        },
         items: cart,
         total: cart.reduce((acc, i) => acc + i.price * i.quantity, 0),
         status: 'pendiente'
-      });
-
+      };
+      
+      batch.set(orderRef, newOrder);
       await batch.commit();
+      
+      setLastOrderId(orderRef.id);
       setCart([]);
       setView('success');
     } catch (e) {
@@ -412,6 +384,25 @@ export default function App() {
     });
     setIsCartOpen(true);
   };
+
+  const updateCartQuantity = (item, delta) => {
+    const currentStock = getStock(item.id, item.finish);
+    const newQty = item.quantity + delta;
+
+    if (newQty <= 0) {
+      setCart(prev => prev.filter(i => i !== item));
+      return;
+    }
+
+    if (newQty > currentStock && user?.role !== 'admin') {
+      alert(`No puedes agregar más. Solo hay ${currentStock} en stock.`);
+      return;
+    }
+
+    setCart(prev => prev.map(i => i === item ? { ...i, quantity: newQty } : i));
+  };
+
+  const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
   // --- VISTAS ---
 
@@ -497,6 +488,101 @@ export default function App() {
     );
   };
 
+  const renderCheckout = () => (
+    <div className="max-w-4xl mx-auto p-4 sm:p-8">
+      <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3"><ShieldCheck className="text-green-500" size={32} /> Finalizar Compra</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        {/* Resumen */}
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 h-fit">
+            <h3 className="text-xl font-bold text-slate-200 mb-4">Resumen del Pedido</h3>
+            <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                {cart.map((item, idx) => (
+                <div key={idx} className="flex gap-4 items-center border-b border-slate-700 pb-4">
+                    <img src={item.image} alt={item.name} className="w-12 h-16 object-cover rounded" />
+                    <div className="flex-1">
+                      <p className="text-white font-medium text-sm">{item.name}</p>
+                      <div className="text-slate-400 text-xs flex flex-col">
+                        <span>{item.set}</span>
+                        <span className="flex items-center gap-1">
+                            {item.finish === 'foil' && <Zap size={10} className="text-yellow-400" fill="currentColor" />}
+                            {item.finish === 'foil' ? 'Foil' : 'Normal'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-slate-300 text-xs">x{item.quantity}</p>
+                      <p className="text-white font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                    </div>
+                </div>
+                ))}
+            </div>
+            <div className="mt-6 pt-4 border-t border-slate-600 flex justify-between items-center text-xl font-bold text-white">
+                <span>Total</span>
+                <span className="text-green-400">${cartTotal.toFixed(2)}</span>
+            </div>
+        </div>
+        
+        {/* Formulario */}
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
+            <h3 className="text-xl font-bold text-slate-200 mb-4">Datos de Envío</h3>
+            <form onSubmit={handleCheckout} className="space-y-4">
+                <div>
+                  <label className="block text-slate-400 text-sm mb-1">Nombre Completo</label>
+                  <input required type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.name} onChange={e => setCheckoutForm({...checkoutForm, name: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-sm mb-1">Teléfono / WhatsApp</label>
+                  <input required type="tel" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.phone} onChange={e => setCheckoutForm({...checkoutForm, phone: e.target.value})} placeholder="5555-5555" />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-sm mb-1">Email</label>
+                  <input required type="email" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.email} onChange={e => setCheckoutForm({...checkoutForm, email: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-slate-400 text-sm mb-1">Dirección de Entrega</label>
+                  <textarea required className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-24" value={checkoutForm.address} onChange={e => setCheckoutForm({...checkoutForm, address: e.target.value})} />
+                </div>
+                
+                <Button type="submit" variant="success" className="w-full mt-6 py-3" disabled={loading}>
+                  {loading ? 'Procesando...' : `Confirmar Pedido ($${cartTotal.toFixed(2)})`}
+                </Button>
+                <Button variant="secondary" onClick={() => setView('store')} className="w-full mt-2" type="button">Cancelar</Button>
+            </form>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderSuccess = () => (
+    <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
+      <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mb-6 animate-bounce"><CheckCircle size={48} className="text-white" /></div>
+      <h2 className="text-4xl font-bold text-white mb-2">¡Orden Ingresada!</h2>
+      <p className="text-slate-400 mb-8 text-lg">Tu pedido #{lastOrderId?.substring(0,8)} ha sido reservado.</p>
+      
+      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 max-w-md w-full mb-8">
+        <h3 className="text-white font-bold mb-4">Siguiente Paso: Realizar Pago</h3>
+        <p className="text-slate-400 text-sm mb-6">
+          Para confirmar tu pedido y coordinar el envío, envíanos un mensaje por WhatsApp con el detalle de tu orden.
+        </p>
+        
+        <a 
+          href={`https://wa.me/50246903693?text=Hola, acabo de realizar la orden %23${lastOrderId}. Mi nombre es ${checkoutForm.name}. El total es $${cartTotal.toFixed(2)}. Quisiera coordinar el pago.`}
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="w-full block"
+        >
+          <Button variant="whatsapp" className="w-full py-3 text-lg">
+            <MessageCircle size={24} /> Enviar mensaje a WhatsApp
+          </Button>
+        </a>
+      </div>
+
+      <Button onClick={() => setView('store')} variant="secondary">Volver a la Tienda</Button>
+    </div>
+  );
+
+  // ... (renderAdminOrders, renderAdminInventory, renderLogin, renderProfile son iguales) ...
   const renderAdminOrders = () => (
     <div className="max-w-6xl mx-auto p-4">
       <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3"><ClipboardList className="text-purple-500" /> Órdenes Recientes</h2>
@@ -519,6 +605,7 @@ export default function App() {
                     <div className="text-xs text-slate-500 mb-1">{new Date(order.date).toLocaleString()}</div>
                     <div className="text-white font-medium">{order.buyer.name}</div>
                     <div className="text-xs">{order.buyer.email}</div>
+                    <div className="text-xs text-slate-500">{order.buyer.phone}</div>
                     <div className="text-xs font-mono text-purple-400 mt-1">{order.id.substring(0,8)}...</div>
                   </td>
                   <td className="p-4">
@@ -630,6 +717,102 @@ export default function App() {
     </div>
   );
 
+  const renderLogin = () => (
+    <div className="flex items-center justify-center min-h-[80vh]">
+      <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 w-full max-w-md shadow-2xl">
+        <h2 className="text-2xl font-bold text-white mb-6 text-center">{authForm.isRegister ? "Crear Cuenta" : "Iniciar Sesión"}</h2>
+        {authForm.error && <div className="bg-red-500/20 text-red-200 p-3 rounded mb-4 text-sm">{authForm.error}</div>}
+        <form onSubmit={handleAuth} className="space-y-4">
+          <input type="email" placeholder="Email" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} required />
+          <input type="password" placeholder="Contraseña" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
+          <Button type="submit" className="w-full">{authForm.isRegister ? "Registrarse" : "Entrar"}</Button>
+        </form>
+        <p className="text-center mt-4 text-sm cursor-pointer text-purple-400" onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})}>
+          {authForm.isRegister ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate"}
+        </p>
+      </div>
+    </div>
+  );
+
+  const renderProfile = () => {
+    return (
+      <div className="max-w-4xl mx-auto p-4 sm:p-8">
+        <div className="mb-8 flex items-center gap-4">
+            <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">
+                {user?.email?.charAt(0).toUpperCase()}
+            </div>
+            <div>
+                <h2 className="text-3xl font-bold text-white">Mi Perfil</h2>
+                <p className="text-slate-400">{user?.email}</p>
+                {user?.role === 'admin' && <Badge color="bg-yellow-600">Administrador</Badge>}
+            </div>
+        </div>
+
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-xl">
+            <div className="p-6 border-b border-slate-700 bg-slate-900/50">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Clock size={20} className="text-purple-400"/> Historial de Pedidos
+                </h3>
+            </div>
+            
+            {orders.length === 0 ? (
+                <div className="p-12 text-center text-slate-500">
+                    <Package size={48} className="mx-auto mb-4 opacity-20"/>
+                    <p>No has realizado ningún pedido todavía.</p>
+                    <Button variant="outline" onClick={() => setView('store')} className="mt-4 mx-auto">Ir a la Tienda</Button>
+                </div>
+            ) : (
+                <div className="divide-y divide-slate-700">
+                    {orders.map(order => (
+                        <div key={order.id} className="p-6 hover:bg-slate-750 transition-colors">
+                            <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-lg font-bold text-white">Pedido #{order.id.substring(0, 8)}...</span>
+                                        <Badge color={
+                                            order.status === 'pagado' ? 'bg-green-600' : 
+                                            order.status === 'cancelado' ? 'bg-red-600' : 
+                                            order.status === 'enviado' ? 'bg-blue-600' : 'bg-yellow-600'
+                                        }>{order.status}</Badge>
+                                    </div>
+                                    <p className="text-sm text-slate-400">{new Date(order.date).toLocaleString()}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm text-slate-400">Total</p>
+                                    <p className="text-xl font-bold text-green-400">${order.total.toFixed(2)}</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+                                {order.items.map((item, i) => (
+                                    <div key={i} className="flex items-center gap-3">
+                                        <img src={item.image} alt="" className="w-8 h-10 object-cover rounded bg-black"/>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-slate-200 truncate">{item.name}</p>
+                                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                                <span>{item.set}</span>
+                                                <span className="flex items-center gap-1">
+                                                    {item.finish === 'foil' && <Zap size={10} className="text-yellow-500"/>}
+                                                    {item.finish === 'foil' ? 'Foil' : 'Normal'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs text-slate-400">x{item.quantity}</span>
+                                            <span className="block text-sm font-bold text-slate-300">${item.price}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-20">
       {/* Navbar */}
@@ -703,48 +886,12 @@ export default function App() {
           </>
         )}
 
-        {view === 'login' && (
-          <div className="max-w-md mx-auto bg-slate-800 p-8 rounded-xl border border-slate-700">
-            <h2 className="text-2xl font-bold text-white mb-6 text-center">{authForm.isRegister ? "Crear Cuenta" : "Iniciar Sesión"}</h2>
-            {authForm.error && <div className="bg-red-500/20 text-red-200 p-3 rounded mb-4 text-sm">{authForm.error}</div>}
-            <form onSubmit={handleAuth} className="space-y-4">
-              <input type="email" placeholder="Email" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} required />
-              <input type="password" placeholder="Contraseña (min 6 caracteres)" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
-              <Button type="submit" className="w-full">{authForm.isRegister ? "Registrarse" : "Entrar"}</Button>
-            </form>
-            <p className="text-center mt-4 text-sm cursor-pointer text-purple-400" onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})}>
-              {authForm.isRegister ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate"}
-            </p>
-          </div>
-        )}
-
+        {view === 'login' && renderLogin()}
         {view === 'admin-inventory' && user?.role === 'admin' && renderAdminInventory()}
         {view === 'admin-orders' && user?.role === 'admin' && renderAdminOrders()}
-
-        {view === 'profile' && user && (
-           <div className="space-y-4 max-w-4xl mx-auto">
-             <h2 className="text-2xl font-bold text-white">Mis Pedidos</h2>
-             {orders.length === 0 ? <p className="text-slate-500">No tienes pedidos.</p> : orders.map(o => (
-               <div key={o.id} className="bg-slate-800 p-4 rounded border border-slate-700">
-                 <div className="flex justify-between mb-2">
-                   <span className="text-green-400 font-bold">${o.total}</span>
-                   <Badge>{o.status}</Badge>
-                 </div>
-                 <div className="text-xs text-slate-400 space-y-1">
-                   {o.items.map((i, idx) => <div key={idx}>{i.quantity}x {i.name} ({i.finish})</div>)}
-                 </div>
-               </div>
-             ))}
-           </div>
-        )}
-
-        {view === 'success' && (
-          <div className="text-center py-20">
-            <CheckCircle size={64} className="text-green-500 mx-auto mb-4"/>
-            <h2 className="text-3xl font-bold text-white">¡Compra Exitosa!</h2>
-            <Button className="mt-6" onClick={() => setView('store')}>Volver a la tienda</Button>
-          </div>
-        )}
+        {view === 'profile' && user && renderProfile()}
+        {view === 'checkout' && renderCheckout()}
+        {view === 'success' && renderSuccess()}
       </main>
 
       {/* Carrito simple (Drawer) */}
@@ -758,14 +905,25 @@ export default function App() {
             </div>
             <div className="flex-1 overflow-y-auto space-y-4">
               {cart.map((item, i) => (
-                <div key={i} className="flex gap-3 bg-slate-800 p-3 rounded">
+                <div key={i} className="bg-slate-800 p-3 rounded flex gap-3 border border-slate-700">
                   <img src={item.image} className="w-12 h-16 bg-black rounded object-cover" alt=""/>
                   <div className="flex-1">
-                    <p className="text-white text-sm font-bold">{item.name}</p>
-                    <p className="text-xs text-slate-400">{item.set} • {item.finish}</p>
-                    <p className="text-green-400 text-sm font-bold">${item.price}</p>
+                    <p className="text-white text-sm font-bold truncate">{item.name}</p>
+                    <p className="text-xs text-slate-400 mb-2">{item.set} • {item.finish}</p>
+                    <div className="flex justify-between items-end">
+                      <div className="flex items-center gap-2 bg-slate-900 rounded p-1">
+                        <button onClick={() => updateCartQuantity(item, -1)} className="w-6 h-6 flex items-center justify-center hover:bg-slate-700 text-slate-300 rounded">-</button>
+                        <span className="text-sm font-bold w-4 text-center">{item.quantity}</span>
+                        <button 
+                          onClick={() => updateCartQuantity(item, 1)} 
+                          disabled={item.quantity >= getStock(item.id, item.finish) && user?.role !== 'admin'}
+                          className="w-6 h-6 flex items-center justify-center hover:bg-slate-700 text-slate-300 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                        >+</button>
+                      </div>
+                      <p className="text-green-400 text-sm font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                    </div>
                   </div>
-                  <button onClick={() => setCart(c => c.filter((_, idx) => idx !== i))} className="text-red-500"><Trash2 size={16}/></button>
+                  <button onClick={() => setCart(c => c.filter((_, idx) => idx !== i))} className="text-red-500 self-start"><Trash2 size={16}/></button>
                 </div>
               ))}
             </div>
@@ -775,7 +933,7 @@ export default function App() {
                 <span>${cart.reduce((a,c) => a + c.price * c.quantity, 0).toFixed(2)}</span>
               </div>
               {user ? (
-                <Button className="w-full py-3" onClick={handleCheckout} disabled={loading}>{loading ? 'Procesando...' : 'Pagar Ahora'}</Button>
+                <Button className="w-full py-3" onClick={() => { setIsCartOpen(false); setView('checkout'); }}>Completar Pedido</Button>
               ) : (
                 <Button className="w-full py-3" variant="secondary" onClick={() => { setIsCartOpen(false); setView('login'); }}>Inicia Sesión para Pagar</Button>
               )}
