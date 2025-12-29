@@ -25,7 +25,7 @@ const EXCHANGE_RATE = 7.5; // Tasa de cambio: $1 USD = Q7.5
 const BANNER_CONFIG = {
   show: true, 
   title: "¡Nuevas Llegadas: Ixalan!",
-  subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
+  subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios.",
   buttonText: "Ver Colección",
   image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
   actionQuery: "set:lci" 
@@ -61,7 +61,10 @@ if (isConfigured) {
 }
 
 // --- UTILIDADES GLOBALES ---
-const getStockValue = (inventory, id, finish) => inventory[id]?.[finish] || 0;
+const getStockValue = (inventory, id, finish) => {
+  if (!inventory || !id) return 0;
+  return inventory[id]?.[finish] || 0;
+};
 
 // --- COMPONENTES UI ---
 
@@ -87,22 +90,13 @@ const Badge = ({ children, color = 'bg-blue-600' }) => (
 const QuantitySelector = ({ qty, setQty, max, disabled }) => (
   <div className={`flex items-center bg-slate-900 rounded border border-slate-600 h-8 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
     <button 
-      onClick={() => setQty(Math.max(1, qty - 1))} 
+      onClick={(e) => { e.stopPropagation(); setQty(Math.max(1, qty - 1)); }} 
       className="px-2 h-full hover:bg-slate-700 text-slate-400 rounded-l transition-colors"
       disabled={disabled || qty <= 1}
     ><Minus size={12} /></button>
-    <input 
-      type="number" 
-      value={qty} 
-      onChange={(e) => {
-        const val = parseInt(e.target.value) || 1;
-        setQty(Math.min(Math.max(1, val), max)); // Clamp between 1 and max
-      }}
-      className="w-8 bg-transparent text-center text-xs text-white outline-none font-bold appearance-none"
-      disabled={disabled}
-    />
+    <div className="w-8 text-center text-xs text-white font-bold pointer-events-none">{qty}</div>
     <button 
-      onClick={() => setQty(Math.min(max, qty + 1))} 
+      onClick={(e) => { e.stopPropagation(); setQty(Math.min(max, qty + 1)); }} 
       className="px-2 h-full hover:bg-slate-700 text-slate-400 rounded-r transition-colors"
       disabled={disabled || qty >= max}
     ><Plus size={12} /></button>
@@ -110,13 +104,12 @@ const QuantitySelector = ({ qty, setQty, max, disabled }) => (
 );
 
 // --- COMPONENTE DE CARTA INDIVIDUAL ---
-// Extraído para manejar su propio estado de cantidad
 const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) => {
   const [qtyNormal, setQtyNormal] = useState(1);
   const [qtyFoil, setQtyFoil] = useState(1);
 
   const pNormalUSD = card.prices?.usd;
-  const pFoilUSD = card.prices?.usd_foil || card.prices?.usd_etched; // Fallback para etched
+  const pFoilUSD = card.prices?.usd_foil || card.prices?.usd_etched;
   
   const pNormal = pNormalUSD ? parseFloat(pNormalUSD) * EXCHANGE_RATE : null;
   const pFoil = pFoilUSD ? parseFloat(pFoilUSD) * EXCHANGE_RATE : null;
@@ -127,7 +120,6 @@ const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) 
   const inCartN = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
   const inCartF = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
 
-  // Stock disponible real para el usuario (lo que hay en bodega - lo que ya tiene en carrito)
   const availableN = user?.role === 'admin' ? 999 : Math.max(0, sNormal - inCartN);
   const availableF = user?.role === 'admin' ? 999 : Math.max(0, sFoil - inCartF);
 
@@ -159,7 +151,7 @@ const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) 
                 <div className="flex items-center gap-1">
                     {availableN > 0 && <QuantitySelector qty={qtyNormal} setQty={setQtyNormal} max={availableN} disabled={availableN <= 0} />}
                     <button 
-                      onClick={() => { addToCart(card, 'normal', pNormalUSD, qtyNormal); setQtyNormal(1); }} 
+                      onClick={(e) => { e.stopPropagation(); addToCart(card, 'normal', pNormalUSD, qtyNormal); setQtyNormal(1); }} 
                       disabled={availableN <= 0} 
                       className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableN <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'}`}
                     >
@@ -182,7 +174,7 @@ const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) 
                  <div className="flex items-center gap-1">
                     {availableF > 0 && <QuantitySelector qty={qtyFoil} setQty={setQtyFoil} max={availableF} disabled={availableF <= 0} />}
                     <button 
-                      onClick={() => { addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
+                      onClick={(e) => { e.stopPropagation(); addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
                       disabled={availableF <= 0} 
                       className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableF <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
                     >
@@ -583,7 +575,6 @@ export default function App() {
     const inCartItem = cart.find(i => i.id === card.id && i.finish === finish);
     const inCartQty = inCartItem?.quantity || 0;
     
-    // Verificación de stock total
     if ((inCartQty + quantityToAdd) > stock && user?.role !== 'admin') {
        alert(`Solo hay ${stock} disponibles. Ya tienes ${inCartQty} en el carrito.`);
        return;
@@ -620,7 +611,7 @@ export default function App() {
             <div className="max-w-2xl animate-in slide-in-from-left duration-700">
                <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-4 leading-tight drop-shadow-lg">{BANNER_CONFIG.title}</h1>
                <p className="text-base md:text-lg text-slate-300 mb-6 max-w-lg drop-shadow-md">{BANNER_CONFIG.subtitle}</p>
-               <div className="flex"><Button variant="white" onClick={() => { setQuery(BANNER_CONFIG.actionQuery); }} className="px-6 py-2 text-sm font-bold">{BANNER_CONFIG.buttonText}</Button></div>
+               <div className="flex mt-6"><Button variant="white" onClick={() => { setQuery(BANNER_CONFIG.actionQuery); }} className="px-6 py-2 text-sm font-bold">{BANNER_CONFIG.buttonText}</Button></div>
             </div>
         </div>
       </div>
