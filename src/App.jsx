@@ -4,7 +4,7 @@ import {
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
   Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle, Eye, Star,
-  ArrowUpDown, Calendar, Save, Edit
+  ArrowUpDown, Calendar, Save, Edit, Plus, Minus
 } from 'lucide-react';
 
 // --- IMPORTACIONES DE FIREBASE ---
@@ -27,7 +27,7 @@ const BANNER_CONFIG = {
   title: "¡Nuevas Llegadas: Ixalan!",
   subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
   buttonText: "Ver Colección",
-  image: "https://media.wizards.com/2023/images/daily/5UK4owRxnQy.jpg", 
+  image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
   actionQuery: "set:lci" 
 };
 
@@ -60,9 +60,12 @@ if (isConfigured) {
   }
 }
 
-// --- Componentes UI ---
+// --- UTILIDADES GLOBALES ---
+const getStockValue = (inventory, id, finish) => inventory[id]?.[finish] || 0;
 
-const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = "button" }) => {
+// --- COMPONENTES UI ---
+
+const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, type = "button", title="" }) => {
   const baseStyle = "px-4 py-2 rounded-lg font-bold transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed";
   const variants = {
     primary: "bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20",
@@ -74,12 +77,193 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
     ghost: "bg-transparent hover:bg-slate-800 text-slate-300",
     white: "bg-white text-purple-900 hover:bg-slate-100 shadow-xl" 
   };
-  return <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
+  return <button type={type} title={title} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
 };
 
 const Badge = ({ children, color = 'bg-blue-600' }) => (
   <span className={`${color} text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-wider`}>{children}</span>
 );
+
+const QuantitySelector = ({ qty, setQty, max, disabled }) => (
+  <div className={`flex items-center bg-slate-900 rounded border border-slate-600 h-8 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+    <button 
+      onClick={() => setQty(Math.max(1, qty - 1))} 
+      className="px-2 h-full hover:bg-slate-700 text-slate-400 rounded-l transition-colors"
+      disabled={disabled || qty <= 1}
+    ><Minus size={12} /></button>
+    <input 
+      type="number" 
+      value={qty} 
+      onChange={(e) => {
+        const val = parseInt(e.target.value) || 1;
+        setQty(Math.min(Math.max(1, val), max)); // Clamp between 1 and max
+      }}
+      className="w-8 bg-transparent text-center text-xs text-white outline-none font-bold appearance-none"
+      disabled={disabled}
+    />
+    <button 
+      onClick={() => setQty(Math.min(max, qty + 1))} 
+      className="px-2 h-full hover:bg-slate-700 text-slate-400 rounded-r transition-colors"
+      disabled={disabled || qty >= max}
+    ><Plus size={12} /></button>
+  </div>
+);
+
+// --- COMPONENTE DE CARTA INDIVIDUAL ---
+// Extraído para manejar su propio estado de cantidad
+const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) => {
+  const [qtyNormal, setQtyNormal] = useState(1);
+  const [qtyFoil, setQtyFoil] = useState(1);
+
+  const pNormalUSD = card.prices?.usd;
+  const pFoilUSD = card.prices?.usd_foil || card.prices?.usd_etched; // Fallback para etched
+  
+  const pNormal = pNormalUSD ? parseFloat(pNormalUSD) * EXCHANGE_RATE : null;
+  const pFoil = pFoilUSD ? parseFloat(pFoilUSD) * EXCHANGE_RATE : null;
+
+  const sNormal = getStockValue(inventory, card.id, 'normal');
+  const sFoil = getStockValue(inventory, card.id, 'foil');
+  
+  const inCartN = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
+  const inCartF = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
+
+  // Stock disponible real para el usuario (lo que hay en bodega - lo que ya tiene en carrito)
+  const availableN = user?.role === 'admin' ? 999 : Math.max(0, sNormal - inCartN);
+  const availableF = user?.role === 'admin' ? 999 : Math.max(0, sFoil - inCartF);
+
+  return (
+    <div className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative hover:border-purple-500/50 transition-colors">
+      <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => openCardModal(card)}>
+        <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
+        {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
+        {sNormal === 0 && sFoil === 0 && (
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
+            <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase -rotate-12 border-2 border-white">Agotado</span>
+          </div>
+        )}
+      </div>
+      <div className="p-3 flex-1 flex flex-col">
+        <h3 className="font-bold text-white text-sm truncate" title={card.name}>{card.name}</h3>
+        <p className="text-slate-400 text-xs mb-3 truncate">{card.set_name}</p>
+        
+        <div className="mt-auto space-y-2">
+          {/* Fila Normal */}
+          <div className={`p-2 rounded bg-slate-900/50 ${availableN <= 0 ? 'opacity-50' : ''}`}>
+            <div className="flex justify-between items-center mb-1">
+               <span className="text-[10px] text-slate-300">Normal</span>
+               <span className={`text-[9px] ${sNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sNormal}</span>
+            </div>
+            {pNormal ? (
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-green-400 font-bold text-xs">Q{pNormal.toFixed(2)}</span>
+                <div className="flex items-center gap-1">
+                    {availableN > 0 && <QuantitySelector qty={qtyNormal} setQty={setQtyNormal} max={availableN} disabled={availableN <= 0} />}
+                    <button 
+                      onClick={() => { addToCart(card, 'normal', pNormalUSD, qtyNormal); setQtyNormal(1); }} 
+                      disabled={availableN <= 0} 
+                      className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableN <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'}`}
+                    >
+                      <ShoppingCart size={14}/>
+                    </button>
+                </div>
+              </div>
+            ) : <span className="text-slate-600 text-[10px] italic">No disponible</span>}
+          </div>
+
+          {/* Fila Foil */}
+          <div className={`p-2 rounded border border-purple-500/20 bg-purple-900/10 ${availableF <= 0 ? 'opacity-50' : ''}`}>
+             <div className="flex justify-between items-center mb-1">
+               <div className="flex items-center gap-0.5"><Zap size={10} className="text-yellow-400" fill="currentColor"/><span className="text-[10px] text-purple-200">Foil</span></div>
+               <span className={`text-[9px] ${sFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sFoil}</span>
+             </div>
+             {pFoil ? (
+               <div className="flex items-center justify-between gap-1">
+                 <span className="text-green-400 font-bold text-xs">Q{pFoil.toFixed(2)}</span>
+                 <div className="flex items-center gap-1">
+                    {availableF > 0 && <QuantitySelector qty={qtyFoil} setQty={setQtyFoil} max={availableF} disabled={availableF <= 0} />}
+                    <button 
+                      onClick={() => { addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
+                      disabled={availableF <= 0} 
+                      className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableF <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
+                    >
+                      <ShoppingCart size={14}/>
+                    </button>
+                 </div>
+               </div>
+             ) : <span className="text-slate-600 text-[10px] italic">No disponible</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- COMPONENTE MODAL DE DETALLE DE CARTA ---
+const ProductModal = ({ card, cart, user, inventory, onClose, onSearchRelated, addToCart }) => {
+    const [qtyN, setQtyN] = useState(1);
+    const [qtyF, setQtyF] = useState(1);
+
+    const pNormalUSD = card.prices?.usd;
+    const pFoilUSD = card.prices?.usd_foil || card.prices?.usd_etched;
+    const pNormal = pNormalUSD ? parseFloat(pNormalUSD) * EXCHANGE_RATE : null;
+    const pFoil = pFoilUSD ? parseFloat(pFoilUSD) * EXCHANGE_RATE : null;
+    const sNormal = getStockValue(inventory, card.id, 'normal');
+    const sFoil = getStockValue(inventory, card.id, 'foil');
+    const inCartN = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
+    const inCartF = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
+    const avN = user?.role === 'admin' ? 999 : Math.max(0, sNormal - inCartN);
+    const avF = user?.role === 'admin' ? 999 : Math.max(0, sFoil - inCartF);
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={onClose}>
+           <div className="bg-slate-900 p-6 rounded-xl max-w-4xl w-full flex flex-col md:flex-row gap-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="md:w-1/2 flex justify-center bg-black/20 rounded-xl p-4">
+                 <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="rounded-lg shadow-2xl max-h-[60vh] object-contain" alt=""/>
+              </div>
+              <div className="flex-1 flex flex-col">
+                 <div className="flex justify-between items-start">
+                    <h2 className="text-3xl font-bold text-white mb-2">{card.name}</h2>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white"><X/></button>
+                 </div>
+                 <div className="flex gap-2 mb-4"><Badge>{card.set_name}</Badge><span className="text-slate-400 text-sm capitalize">{card.rarity}</span></div>
+                 <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 text-slate-300 font-serif mb-6 text-sm overflow-y-auto max-h-40 custom-scrollbar">
+                    {card.card_faces ? card.card_faces.map((f, i) => <div key={i} className="mb-2 last:mb-0"><strong className="block text-purple-300">{f.name}</strong><p>{f.oracle_text}</p></div>) : <p>{card.oracle_text}</p>}
+                 </div>
+                 <div className="mt-auto space-y-3">
+                   <Button variant="outline" onClick={onSearchRelated} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
+                   
+                   {/* Normal Row Modal */}
+                   <div className={`bg-slate-800 p-4 rounded-lg flex items-center justify-between ${avN <= 0 ? 'opacity-60' : ''}`}>
+                      <div>
+                        <p className="text-white font-bold">Normal</p>
+                        <p className="text-xs text-green-400">Stock: {sNormal}</p>
+                        {inCartN > 0 && <p className="text-[10px] text-purple-400">En carrito: {inCartN}</p>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <span className="text-xl font-bold text-white">{pNormal ? `Q${pNormal.toFixed(2)}` : '--'}</span>
+                         {avN > 0 && <QuantitySelector qty={qtyN} setQty={setQtyN} max={avN} disabled={avN <= 0} />}
+                         <Button disabled={!pNormal || avN <= 0} onClick={() => { addToCart(card, 'normal', pNormalUSD, qtyN); setQtyN(1); }}>Agregar</Button>
+                      </div>
+                   </div>
+                   {/* Foil Row Modal */}
+                   <div className={`bg-purple-900/20 border border-purple-500/20 p-4 rounded-lg flex items-center justify-between ${avF <= 0 ? 'opacity-60' : ''}`}>
+                      <div>
+                        <p className="text-purple-200 font-bold flex items-center gap-1"><Zap size={14}/> Foil</p>
+                        <p className="text-xs text-green-400">Stock: {sFoil}</p>
+                        {inCartF > 0 && <p className="text-[10px] text-purple-400">En carrito: {inCartF}</p>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                         <span className="text-xl font-bold text-purple-200">{pFoil ? `Q${pFoil.toFixed(2)}` : '--'}</span>
+                         {avF > 0 && <QuantitySelector qty={qtyF} setQty={setQtyF} max={avF} disabled={avF <= 0} />}
+                         <Button variant="secondary" disabled={!pFoil || avF <= 0} onClick={() => { addToCart(card, 'foil', pFoilUSD, qtyF); setQtyF(1); }}>Agregar</Button>
+                      </div>
+                   </div>
+                 </div>
+              </div>
+           </div>
+        </div>
+    );
+};
 
 // --- Componente Principal ---
 
@@ -103,7 +287,7 @@ export default function App() {
 
   // --- ESTADOS ---
   const [user, setUser] = useState(null); 
-  const [userProfile, setUserProfile] = useState({}); // Perfil completo (nombre, telefono, etc)
+  const [userProfile, setUserProfile] = useState({}); 
   const [view, setView] = useState('store');
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
@@ -112,8 +296,8 @@ export default function App() {
   const [lastOrderId, setLastOrderId] = useState(null); 
   const [lastOrderTotal, setLastOrderTotal] = useState(0); 
   
-  const [query, setQuery] = useState(''); // Lo que se busca realmente
-  const [inputValue, setInputValue] = useState(''); // Lo que el usuario escribe
+  const [query, setQuery] = useState(''); 
+  const [inputValue, setInputValue] = useState(''); 
   const [suggestions, setSuggestions] = useState([]); 
   const [showSuggestions, setShowSuggestions] = useState(false);
   
@@ -127,11 +311,9 @@ export default function App() {
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
   
-  // Estado para edición de perfil
   const [profileForm, setProfileForm] = useState({ name: '', phone: '', address: '' });
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // ESTADOS DE FILTROS Y ORDENAMIENTO
   const [setsList, setSetsList] = useState([]);
   const [activeSet, setActiveSet] = useState('');
   const [activeColor, setActiveColor] = useState(''); 
@@ -156,7 +338,7 @@ export default function App() {
     if (window.location.hash) window.history.replaceState(null, '', ' ');
     setView('store'); 
     setQuery(''); 
-    setInputValue(''); // Limpiar la barra visualmente
+    setInputValue(''); 
     setActiveSet(''); setActiveColor(''); setSortOption('released');
   };
 
@@ -179,18 +361,8 @@ export default function App() {
         }
         setUser({ uid: u.uid, email: u.email, role });
         setUserProfile(profileData);
-        // Pre-llenar forms
-        setCheckoutForm({ 
-            name: profileData.name || '', 
-            email: u.email, 
-            phone: profileData.phone || '', 
-            address: profileData.address || '' 
-        });
-        setProfileForm({
-            name: profileData.name || '',
-            phone: profileData.phone || '',
-            address: profileData.address || ''
-        });
+        setCheckoutForm({ name: profileData.name || '', email: u.email, phone: profileData.phone || '', address: profileData.address || '' });
+        setProfileForm({ name: profileData.name || '', phone: profileData.phone || '', address: profileData.address || '' });
       } else {
         setUser(null);
         setUserProfile({});
@@ -236,9 +408,6 @@ export default function App() {
   }, []);
 
   // --- FUNCIONES LÓGICAS ---
-
-  const getStock = (id, finish) => inventory[id]?.[finish] || 0;
-
   const updateStock = async (id, finish, val) => {
     if (!user || user.role !== 'admin' || !db) return;
     const qty = parseInt(val); if (isNaN(qty)) return;
@@ -277,17 +446,12 @@ export default function App() {
       e.preventDefault();
       if (!db || !user) return;
       try {
-          await setDoc(doc(db, "users", user.uid), {
-              profile: profileForm
-          }, { merge: true });
-          
+          await setDoc(doc(db, "users", user.uid), { profile: profileForm }, { merge: true });
           setUserProfile(profileForm);
           setCheckoutForm(prev => ({ ...prev, ...profileForm }));
           setIsEditingProfile(false);
           alert("Perfil actualizado correctamente.");
-      } catch (e) {
-          alert("Error al guardar perfil: " + e.message);
-      }
+      } catch (e) { alert("Error al guardar perfil: " + e.message); }
   };
 
   const handleCheckout = async (e) => {
@@ -321,7 +485,6 @@ export default function App() {
     try {
       let url = 'https://api.scryfall.com/cards/search?';
       let qParts = [];
-
       const textQuery = overrideQuery || query;
       if (textQuery) qParts.push(textQuery);
       if (activeSet && !textQuery.includes('set:')) qParts.push(`set:${activeSet}`);
@@ -335,14 +498,12 @@ export default function App() {
       if (!textQuery && !isFiltering) { setLoading(false); return; }
 
       url += `q=${encodeURIComponent(qParts.join(' '))}`;
-      
       if (sortOption === 'name') url += '&order=name';
       else if (sortOption === 'usd_asc') url += '&order=usd&dir=asc';
       else if (sortOption === 'usd_desc') url += '&order=usd&dir=desc';
       else if (sortOption === 'released') url += '&order=released';
 
       if (textQuery && !textQuery.includes('unique:prints')) url += '&unique=prints';
-
       const res = await fetch(url);
       const json = await res.json();
       setCards(json.data?.filter(c => c.image_uris || c.card_faces) || []);
@@ -397,7 +558,7 @@ export default function App() {
         .then(r=>r.json())
         .then(d=> {
            setSuggestions(d.data||[]);
-           setShowSuggestions(true); // <--- FORZAR APERTURA AQUÍ
+           setShowSuggestions(true);
         });
     } else {
       setShowSuggestions(false);
@@ -406,7 +567,7 @@ export default function App() {
 
   const handleSearchSubmit = (e) => {
       e.preventDefault();
-      setQuery(inputValue); // Aqui si lanza la búsqueda real
+      setQuery(inputValue); 
       setShowSuggestions(false);
   };
 
@@ -414,18 +575,27 @@ export default function App() {
     setInputValue(name);
     setQuery(name);
     setShowSuggestions(false);
-    // El useEffect de query se encargará de buscar
   };
 
-  const addToCart = (card, finish, price) => {
-    const stock = getStock(card.id, finish);
-    const inCart = cart.find(i => i.id === card.id && i.finish === finish)?.quantity || 0;
-    if (stock <= inCart && user?.role !== 'admin') return alert("Sin stock suficiente.");
+  // --- LÓGICA DE CARRITO MEJORADA ---
+  const addToCart = (card, finish, priceUSD, quantityToAdd = 1) => {
+    const stock = getStockValue(inventory, card.id, finish);
+    const inCartItem = cart.find(i => i.id === card.id && i.finish === finish);
+    const inCartQty = inCartItem?.quantity || 0;
+    
+    // Verificación de stock total
+    if ((inCartQty + quantityToAdd) > stock && user?.role !== 'admin') {
+       alert(`Solo hay ${stock} disponibles. Ya tienes ${inCartQty} en el carrito.`);
+       return;
+    }
+
+    const priceQ = parseFloat(priceUSD) * EXCHANGE_RATE;
+
     setCart(prev => {
       const exists = prev.find(i => i.id === card.id && i.finish === finish);
-      if (exists) return prev.map(i => i === exists ? { ...i, quantity: i.quantity + 1 } : i);
+      if (exists) return prev.map(i => i === exists ? { ...i, quantity: i.quantity + quantityToAdd } : i);
       const img = card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal;
-      return [...prev, { id: card.id, name: card.name, set: card.set_name, collector_number: card.collector_number, image: img, finish, price: parseFloat(price), quantity: 1 }];
+      return [...prev, { id: card.id, name: card.name, set: card.set_name, collector_number: card.collector_number, image: img, finish, price: priceQ, quantity: quantityToAdd }];
     });
     setIsCartOpen(true);
   };
@@ -433,7 +603,7 @@ export default function App() {
   const updateCartQuantity = (item, delta) => {
     const newQty = item.quantity + delta;
     if (newQty <= 0) return setCart(prev => prev.filter(i => i !== item));
-    if (newQty > getStock(item.id, item.finish) && user?.role !== 'admin') return alert("Sin stock.");
+    if (newQty > getStockValue(inventory, item.id, item.finish) && user?.role !== 'admin') return alert("Sin stock.");
     setCart(prev => prev.map(i => i === item ? { ...i, quantity: newQty } : i));
   };
 
@@ -483,60 +653,6 @@ export default function App() {
       </div>
     </div>
   );
-
-  const renderProductCard = (card) => {
-    const pNormal = card.prices?.usd ? parseFloat(card.prices.usd) * EXCHANGE_RATE : null;
-    const pFoil = card.prices?.usd_foil ? parseFloat(card.prices.usd_foil) * EXCHANGE_RATE : null;
-    const sNormal = getStock(card.id, 'normal'), sFoil = getStock(card.id, 'foil');
-    const inCartN = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
-    const inCartF = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
-    const disN = (sNormal <= 0 || (sNormal <= inCartN && user?.role !== 'admin'));
-    const disF = (sFoil <= 0 || (sFoil <= inCartF && user?.role !== 'admin'));
-    
-    return (
-      <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative">
-        <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => openCardModal(card)}>
-          <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
-          {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
-          {sNormal === 0 && sFoil === 0 && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
-              <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase -rotate-12 border-2 border-white">Agotado</span>
-            </div>
-          )}
-        </div>
-        <div className="p-3 flex-1 flex flex-col">
-          <h3 className="font-bold text-white text-sm truncate">{card.name}</h3>
-          <p className="text-slate-400 text-xs mb-2 truncate">{card.set_name}</p>
-          <div className="mt-auto space-y-1.5">
-            <div className={`flex justify-between items-center px-2 py-1 rounded ${disN ? 'bg-slate-900/30 opacity-70' : 'bg-slate-900/50'}`}>
-              <div className="flex flex-col">
-                 <span className="text-slate-300 text-xs">Normal</span>
-                 <span className={`text-[9px] ${sNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sNormal}</span>
-                 {inCartN > 0 && <span className="text-[9px] text-purple-400">En carrito: {inCartN}</span>}
-              </div>
-              {pNormal ? (
-                <div className="flex items-center gap-1.5"><span className="text-green-400 font-bold text-xs">Q{pNormal.toFixed(2)}</span>
-                  <button onClick={() => addToCart(card, 'normal', pNormal)} disabled={disN} className={`p-1 rounded text-white ${disN ? 'bg-slate-700' : 'bg-purple-600 hover:bg-purple-500'}`}><ShoppingCart size={12}/></button>
-                </div>
-              ) : <span className="text-slate-600 text-[10px]">--</span>}
-            </div>
-            <div className={`flex justify-between items-center px-2 py-1 rounded border ${disF ? 'border-transparent bg-slate-900/30 opacity-70' : 'border-purple-500/30 bg-gradient-to-r from-slate-900/50 to-purple-900/20'}`}>
-               <div className="flex flex-col">
-                 <div className="flex items-center gap-0.5"><Zap size={10} className="text-yellow-400" fill="currentColor"/><span className="text-purple-300 text-xs font-semibold">Foil</span></div>
-                 <span className={`text-[9px] ${sFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sFoil}</span>
-                 {inCartF > 0 && <span className="text-[9px] text-purple-400">En carrito: {inCartF}</span>}
-               </div>
-              {pFoil ? (
-                <div className="flex items-center gap-1.5"><span className="text-green-400 font-bold text-xs">Q{pFoil.toFixed(2)}</span>
-                  <button onClick={() => addToCart(card, 'foil', pFoil)} disabled={disF} className={`p-1 rounded text-white ${disF ? 'bg-slate-700' : 'bg-yellow-600 hover:bg-yellow-500'}`}><ShoppingCart size={12}/></button>
-                </div>
-              ) : <span className="text-slate-600 text-[10px]">--</span>}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   const renderCheckout = () => (
     <div className="max-w-4xl mx-auto p-4 sm:p-8">
@@ -835,7 +951,7 @@ export default function App() {
             )}
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {cards.map(renderProductCard)}
+              {cards.map((card) => <ProductCard key={card.id} card={card} cart={cart} user={user} inventory={inventory} addToCart={addToCart} openCardModal={openCardModal} />)}
             </div>
           </>
         )}
@@ -884,45 +1000,16 @@ export default function App() {
         </div>
       )}
       
-      {/* Modales de Cartas y Ordenes - (Mantenemos la implementación anterior) */}
       {selectedCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={closeCardModal}>
-           <div className="bg-slate-900 p-6 rounded-xl max-w-4xl w-full flex flex-col md:flex-row gap-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-              <div className="md:w-1/2 flex justify-center">
-                 <img src={selectedCard.image_uris?.normal || selectedCard.card_faces?.[0]?.image_uris?.normal} className="rounded-lg shadow-2xl max-h-[60vh]" alt=""/>
-              </div>
-              <div className="flex-1 flex flex-col">
-                 <div className="flex justify-between items-start">
-                    <h2 className="text-3xl font-bold text-white mb-2">{selectedCard.name}</h2>
-                    <button onClick={closeCardModal} className="text-slate-400 hover:text-white"><X/></button>
-                 </div>
-                 <div className="flex gap-2 mb-4"><Badge>{selectedCard.set_name}</Badge><span className="text-slate-400 text-sm capitalize">{selectedCard.rarity}</span></div>
-                 <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 text-slate-300 font-serif mb-6 text-sm">
-                    {selectedCard.card_faces ? selectedCard.card_faces.map((f, i) => <div key={i} className="mb-2 last:mb-0"><strong className="block text-purple-300">{f.name}</strong><p>{f.oracle_text}</p></div>) : <p>{selectedCard.oracle_text}</p>}
-                 </div>
-                 <div className="mt-auto space-y-3">
-                   <Button variant="outline" onClick={() => { setQuery(selectedCard.name); setInputValue(selectedCard.name); closeCardModal(); fetchCards(); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
-                   
-                   {/* Normal Row Modal */}
-                   <div className="bg-slate-800 p-4 rounded-lg flex items-center justify-between">
-                      <div><p className="text-white font-bold">Normal</p><p className="text-xs text-green-400">Stock: {getStock(selectedCard.id, 'normal')}</p>
-                      {cart.find(i => i.id === selectedCard.id && i.finish === 'normal') && <p className="text-[10px] text-purple-400">En carrito: {cart.find(i => i.id === selectedCard.id && i.finish === 'normal').quantity}</p>}</div>
-                      <div className="flex items-center gap-2"><span className="text-xl font-bold text-white">{selectedCard.prices?.usd ? `Q${(parseFloat(selectedCard.prices.usd) * EXCHANGE_RATE).toFixed(2)}` : '--'}</span>
-                         <Button disabled={!selectedCard.prices?.usd || getStock(selectedCard.id, 'normal') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'normal')?.quantity || 0) && user?.role !== 'admin'} onClick={() => addToCart(selectedCard, 'normal', selectedCard.prices?.usd)}>Agregar</Button>
-                      </div>
-                   </div>
-                   {/* Foil Row Modal */}
-                   <div className="bg-purple-900/20 border border-purple-500/20 p-4 rounded-lg flex items-center justify-between">
-                      <div><p className="text-purple-200 font-bold flex items-center gap-1"><Zap size={14}/> Foil</p><p className="text-xs text-green-400">Stock: {getStock(selectedCard.id, 'foil')}</p>
-                      {cart.find(i => i.id === selectedCard.id && i.finish === 'foil') && <p className="text-[10px] text-purple-400">En carrito: {cart.find(i => i.id === selectedCard.id && i.finish === 'foil').quantity}</p>}</div>
-                      <div className="flex items-center gap-2"><span className="text-xl font-bold text-purple-200">{selectedCard.prices?.usd_foil ? `Q${(parseFloat(selectedCard.prices.usd_foil) * EXCHANGE_RATE).toFixed(2)}` : '--'}</span>
-                         <Button variant="secondary" disabled={!selectedCard.prices?.usd_foil || getStock(selectedCard.id, 'foil') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'foil')?.quantity || 0) && user?.role !== 'admin'} onClick={() => addToCart(selectedCard, 'foil', selectedCard.prices?.usd_foil)}>Agregar</Button>
-                      </div>
-                   </div>
-                 </div>
-              </div>
-           </div>
-        </div>
+        <ProductModal 
+          card={selectedCard} 
+          cart={cart} 
+          user={user} 
+          inventory={inventory} 
+          onClose={closeCardModal} 
+          onSearchRelated={() => { setQuery(selectedCard.name); setInputValue(selectedCard.name); closeCardModal(); fetchCards(); }} 
+          addToCart={addToCart} 
+        />
       )}
       {renderOrderModal()}
     </div>
