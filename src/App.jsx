@@ -353,8 +353,9 @@ export default function App() {
     const stock = getStock(card.id, finish);
     const inCart = cart.find(i => i.id === card.id && i.finish === finish)?.quantity || 0;
     
+    // Verificación de stock incluyendo lo que ya está en el carrito
     if (stock <= inCart && user?.role !== 'admin') {
-       alert("No hay suficiente stock disponible.");
+       alert(`Solo hay ${stock} disponibles y ya tienes ${inCart} en tu carrito.`);
        return;
     }
 
@@ -377,8 +378,15 @@ export default function App() {
   const renderProductCard = (card) => {
     const pNormal = card.prices?.usd, pFoil = card.prices?.usd_foil;
     const sNormal = getStock(card.id, 'normal'), sFoil = getStock(card.id, 'foil');
-    const hasNormal = !!pNormal;
-    const hasFoil = !!pFoil;
+    
+    // Cantidades en carrito
+    const inCartNormal = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
+    const inCartFoil = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
+
+    // Lógica de deshabilitado (Stock agotado O stock cubierto por carrito)
+    // El admin siempre puede agregar para pruebas
+    const disableNormal = (sNormal <= 0) || (sNormal <= inCartNormal && user?.role !== 'admin');
+    const disableFoil = (sFoil <= 0) || (sFoil <= inCartFoil && user?.role !== 'admin');
     
     return (
       <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative">
@@ -401,18 +409,20 @@ export default function App() {
           
           <div className="mt-auto space-y-1.5">
             {/* Fila Normal */}
-            <div className={`flex justify-between items-center px-2 py-1 rounded ${sNormal > 0 ? 'bg-slate-900/50' : 'bg-slate-900/20 opacity-60'}`}>
+            <div className={`flex justify-between items-center px-2 py-1 rounded ${disableNormal ? 'bg-slate-900/30 opacity-70' : 'bg-slate-900/50'}`}>
               <div className="flex flex-col">
                 <span className="text-slate-300 text-xs">Normal</span>
                 <span className={`text-[9px] ${sNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sNormal}</span>
+                {inCartNormal > 0 && <span className="text-[9px] text-purple-400">En carrito: {inCartNormal}</span>}
               </div>
-              {hasNormal ? (
+              {pNormal ? (
                 <div className="flex items-center gap-1.5">
                   <span className="text-green-400 font-bold text-xs">${pNormal}</span>
                   <button 
                     onClick={() => addToCart(card, 'normal', pNormal)} 
-                    disabled={sNormal<=0} 
-                    className="p-1 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 rounded text-white transition-colors"
+                    disabled={disableNormal} 
+                    className={`p-1 rounded text-white transition-colors ${disableNormal ? 'bg-slate-700 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'}`}
+                    title={disableNormal ? "Sin stock suficiente" : "Agregar Normal"}
                   >
                     <ShoppingCart size={12}/>
                   </button>
@@ -421,21 +431,23 @@ export default function App() {
             </div>
 
             {/* Fila Foil */}
-            <div className={`flex justify-between items-center px-2 py-1 rounded border border-transparent ${sFoil > 0 ? 'bg-gradient-to-r from-slate-900/50 to-purple-900/20 border-purple-500/30' : 'bg-slate-900/20 opacity-60'}`}>
+            <div className={`flex justify-between items-center px-2 py-1 rounded border ${disableFoil ? 'border-transparent bg-slate-900/30 opacity-70' : 'border-purple-500/30 bg-gradient-to-r from-slate-900/50 to-purple-900/20'}`}>
                <div className="flex flex-col">
                   <div className="flex items-center gap-0.5">
                     <Zap size={10} className="text-yellow-400" fill="currentColor" />
                     <span className="text-purple-300 text-xs font-semibold">Foil</span>
                   </div>
                   <span className={`text-[9px] ${sFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sFoil}</span>
+                  {inCartFoil > 0 && <span className="text-[9px] text-purple-400">En carrito: {inCartFoil}</span>}
                </div>
-              {hasFoil ? (
+              {pFoil ? (
                 <div className="flex items-center gap-1.5">
                   <span className="text-green-400 font-bold text-xs">${pFoil}</span>
                   <button 
                     onClick={() => addToCart(card, 'foil', pFoil)} 
-                    disabled={sFoil<=0} 
-                    className="p-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 rounded text-white transition-colors"
+                    disabled={disableFoil} 
+                    className={`p-1 rounded text-white transition-colors ${disableFoil ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
+                    title={disableFoil ? "Sin stock suficiente" : "Agregar Foil"}
                   >
                     <ShoppingCart size={12}/>
                   </button>
@@ -764,25 +776,44 @@ export default function App() {
                 <div className="mt-auto space-y-3">
                    <Button variant="outline" onClick={() => { setQuery(selectedCard.name); setSelectedCard(null); fetchCards(selectedCard.name, true); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
                    
+                   {/* Normal Row en Modal */}
                    <div className="bg-slate-800 p-4 rounded-lg flex items-center justify-between">
                       <div>
                          <p className="text-white font-bold">Normal</p>
                          <p className="text-xs text-green-400">Stock: {getStock(selectedCard.id, 'normal')}</p>
+                         {cart.find(i => i.id === selectedCard.id && i.finish === 'normal') && (
+                            <p className="text-[10px] text-purple-400">En carrito: {cart.find(i => i.id === selectedCard.id && i.finish === 'normal').quantity}</p>
+                         )}
                       </div>
                       <div className="flex items-center gap-2">
                          <span className="text-xl font-bold text-white">${selectedCard.prices?.usd || '--'}</span>
-                         <Button disabled={!selectedCard.prices?.usd || getStock(selectedCard.id, 'normal')<=0} onClick={() => addToCart(selectedCard, 'normal', selectedCard.prices?.usd)}>Agregar</Button>
+                         <Button 
+                            disabled={!selectedCard.prices?.usd || getStock(selectedCard.id, 'normal') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'normal')?.quantity || 0) && user?.role !== 'admin'} 
+                            onClick={() => addToCart(selectedCard, 'normal', selectedCard.prices?.usd)}
+                         >
+                            Agregar
+                         </Button>
                       </div>
                    </div>
 
+                   {/* Foil Row en Modal */}
                    <div className="bg-purple-900/20 border border-purple-500/20 p-4 rounded-lg flex items-center justify-between">
                       <div>
                          <p className="text-purple-200 font-bold flex items-center gap-1"><Zap size={14}/> Foil</p>
                          <p className="text-xs text-green-400">Stock: {getStock(selectedCard.id, 'foil')}</p>
+                         {cart.find(i => i.id === selectedCard.id && i.finish === 'foil') && (
+                            <p className="text-[10px] text-purple-400">En carrito: {cart.find(i => i.id === selectedCard.id && i.finish === 'foil').quantity}</p>
+                         )}
                       </div>
                       <div className="flex items-center gap-2">
                          <span className="text-xl font-bold text-purple-200">${selectedCard.prices?.usd_foil || '--'}</span>
-                         <Button variant="secondary" disabled={!selectedCard.prices?.usd_foil || getStock(selectedCard.id, 'foil')<=0} onClick={() => addToCart(selectedCard, 'foil', selectedCard.prices?.usd_foil)}>Agregar</Button>
+                         <Button 
+                            variant="secondary" 
+                            disabled={!selectedCard.prices?.usd_foil || getStock(selectedCard.id, 'foil') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'foil')?.quantity || 0) && user?.role !== 'admin'} 
+                            onClick={() => addToCart(selectedCard, 'foil', selectedCard.prices?.usd_foil)}
+                         >
+                            Agregar
+                         </Button>
                       </div>
                    </div>
                 </div>
