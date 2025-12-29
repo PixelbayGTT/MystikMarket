@@ -34,7 +34,6 @@ const BANNER_CONFIG = {
 
 // ¡IMPORTANTE! Reemplaza estos valores con los de tu consola de Firebase
 const firebaseConfig = {
-const firebaseConfig = {
   apiKey: "AIzaSyB3-ZfZpmJTbUvR9UeOFmn2F7oDnKz0WXQ",
   authDomain: "mystikmarket-1a296.firebaseapp.com",
   projectId: "mystikmarket-1a296",
