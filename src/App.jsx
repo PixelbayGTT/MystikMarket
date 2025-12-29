@@ -27,7 +27,7 @@ const BANNER_CONFIG = {
   subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
   buttonText: "Ver Colección",
   // URL de la imagen de fondo
-  image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
+  image: "https://media.wizards.com/2023/images/daily/5UK4owRxnQy.jpg", 
   // La búsqueda que se ejecutará al dar click en el botón
   actionQuery: "set:lci" 
 };
