@@ -27,7 +27,7 @@ const firebaseConfig = {
   appId: "1:999199755166:web:91351940643d6e72cd648f"
 };
 
-// Inicializar Firebase (Solo si hay config, para evitar errores en la vista previa sin claves)
+// Inicializar Firebase
 let app, auth, db;
 try {
   app = initializeApp(firebaseConfig);
@@ -68,9 +68,9 @@ export default function App() {
   // --- ESTADOS GLOBALES ---
   const [user, setUser] = useState(null); // { uid, email, role }
   const [view, setView] = useState('store');
-  const [inventory, setInventory] = useState({}); // Ahora sincronizado con Firestore
-  const [orders, setOrders] = useState([]); // Ahora sincronizado con Firestore
-  const [appError, setAppError] = useState(null); // Para errores globales de conexión
+  const [inventory, setInventory] = useState({}); 
+  const [orders, setOrders] = useState([]); 
+  const [appError, setAppError] = useState(null); 
 
   // --- ESTADOS DE TIENDA Y UI ---
   const [query, setQuery] = useState('');
@@ -90,23 +90,31 @@ export default function App() {
 
   // --- 1. SINCRONIZACIÓN CON FIREBASE ---
   
-  // A) Autenticación
+  // A) Autenticación (CORREGIDA PARA FALLOS DE PERMISOS)
   useEffect(() => {
     if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Buscar el rol del usuario en la colección 'users'
-        const userDocRef = doc(db, "users", firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        const userData = userDoc.exists() ? userDoc.data() : {};
+        let role = 'user'; // Rol por defecto
         
+        try {
+          // Intentamos leer el rol desde Firestore
+          const userDocRef = doc(db, "users", firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            role = userDoc.data().role || 'user';
+          }
+        } catch (error) {
+          console.error("No se pudo leer el perfil del usuario (posiblemente reglas de seguridad):", error);
+          // No hacemos nada, el usuario entra con rol 'user' por defecto para no bloquear la app
+        }
+
         setUser({
           uid: firebaseUser.uid,
           email: firebaseUser.email,
-          role: userData.role || 'user'
+          role: role
         });
         
-        // Precargar email en checkout
         setCheckoutForm(prev => ({ ...prev, email: firebaseUser.email }));
       } else {
         setUser(null);
@@ -118,7 +126,6 @@ export default function App() {
   // B) Inventario en Tiempo Real
   useEffect(() => {
     if (!db) return;
-    // Escuchar cambios en la colección 'inventory'
     const q = collection(db, "inventory");
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const invData = {};
@@ -127,50 +134,42 @@ export default function App() {
       });
       setInventory(invData);
     }, (error) => {
-      console.error("Error al sincronizar inventario:", error);
+      console.error("Error sincronizando inventario (Revisa permisos de Firebase):", error);
     });
     return () => unsubscribe();
   }, []);
 
-  // C) Órdenes en Tiempo Real (Solo si es Admin o para el usuario propio)
+  // C) Órdenes en Tiempo Real
   useEffect(() => {
     if (!db || !user) {
       setOrders([]);
       return;
     }
 
-    let q;
-    if (user.role === 'admin') {
-      // Admin ve todas las órdenes
-      q = query(collection(db, "orders"), orderBy("date", "desc"));
-    } else {
-      // Usuario ve solo sus órdenes (filtrado en cliente por simplicidad, idealmente reglas de seguridad)
-      q = query(collection(db, "orders"), orderBy("date", "desc")); 
-    }
-
+    let q = query(collection(db, "orders"), orderBy("date", "desc"));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const ordersData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data(),
-        // Convertir Timestamp de Firebase a fecha legible si es necesario
         date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
       }));
       
-      // Filtrado de seguridad en cliente (si no configuraste reglas estrictas aún)
+      // Filtrado simple en cliente
       if (user.role !== 'admin') {
         setOrders(ordersData.filter(o => o.buyer.email === user.email));
       } else {
         setOrders(ordersData);
       }
+    }, (error) => {
+       console.error("Error leyendo órdenes:", error);
     });
     return () => unsubscribe();
   }, [user]);
 
-  // Carga inicial de cartas (Tendencias)
+  // Carga inicial
   useEffect(() => {
     fetchCards('format:commander year>=2022', false);
-    
-    // Listener para cerrar autocompletado
     function handleClickOutside(event) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
         setShowSuggestions(false);
@@ -181,68 +180,45 @@ export default function App() {
   }, []);
 
 
-  // --- 2. LÓGICA DE NEGOCIO (BACKEND REAL) ---
+  // --- 2. LÓGICA DE NEGOCIO ---
 
-  // Obtener stock desde el estado sincronizado (Fuente de verdad)
   const getStock = (cardId, finish) => {
     if (!inventory[cardId]) return 0;
     return inventory[cardId][finish] || 0;
   };
 
-  // Función Admin: Actualizar stock en Firestore
   const updateStock = async (cardId, finish, newQuantity) => {
     if (!db || !user || user.role !== 'admin') return;
-    
     const qty = parseInt(newQuantity);
     if (isNaN(qty) || qty < 0) return;
-
     try {
       const docRef = doc(db, "inventory", cardId);
-      // setDoc con merge: true crea el documento si no existe, o actualiza solo el campo si existe
       await setDoc(docRef, { [finish]: qty }, { merge: true });
     } catch (error) {
       console.error("Error actualizando stock:", error);
-      alert("Error al actualizar la base de datos.");
+      alert("Error al actualizar. Verifica que seas Admin y tengas permisos.");
     }
   };
 
-  // Función Checkout: Transacción Atómica
   const handleCheckoutSubmit = async (e) => {
     e.preventDefault();
-    if (!db) {
-      alert("Error de conexión con la base de datos.");
-      return;
-    }
-
+    if (!db) { alert("Error de conexión."); return; }
     setLoading(true);
-
     try {
-      // Usamos un 'batch' para asegurar que todo ocurra o nada ocurra
       const batch = writeBatch(db);
       
-      // 1. Verificar Stock de cada item ANTES de procesar
       for (const item of cart) {
         const itemRef = doc(db, "inventory", item.id);
         const itemSnap = await getDoc(itemRef);
         
-        if (!itemSnap.exists()) {
-          throw new Error(`El producto ${item.name} ya no está disponible.`);
-        }
-        
+        if (!itemSnap.exists()) throw new Error(`El producto ${item.name} ya no está disponible.`);
         const currentStock = itemSnap.data()[item.finish] || 0;
         
-        if (currentStock < item.quantity) {
-          throw new Error(`Stock insuficiente para ${item.name} (${item.finish}). Solo quedan ${currentStock}.`);
-        }
-
-        // 2. Preparar la resta de stock
-        // Nota: En Firestore cliente no podemos hacer decrementos atómicos condicionales complejos fácilmente en un batch sin Cloud Functions,
-        // pero podemos calcular el nuevo valor aquí ya que leímos el dato hace milisegundos.
+        if (currentStock < item.quantity) throw new Error(`Stock insuficiente para ${item.name} (${item.finish}).`);
         const newStock = currentStock - item.quantity;
         batch.update(itemRef, { [item.finish]: newStock });
       }
 
-      // 3. Crear la orden
       const orderRef = doc(collection(db, "orders"));
       const newOrder = {
         date: serverTimestamp(),
@@ -252,54 +228,50 @@ export default function App() {
         status: 'pendiente'
       };
       batch.set(orderRef, newOrder);
-
-      // 4. Ejecutar todo
       await batch.commit();
 
-      // 5. Éxito
       setView('success');
       setCart([]);
       setCheckoutForm({ name: '', email: '', address: '' });
-
     } catch (error) {
       console.error("Error en checkout:", error);
-      alert(error.message); // Mostrar mensaje amigable al usuario (ej: "Stock insuficiente")
+      alert(error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  // Función Auth: Login/Registro Real
   const handleAuth = async (e) => {
     e.preventDefault();
-    if (!auth) {
-      setAuthForm({ ...authForm, error: "Firebase no configurado." });
-      return;
-    }
+    if (!auth) { setAuthForm({ ...authForm, error: "Firebase no configurado." }); return; }
     
     setAuthForm({ ...authForm, error: '' });
 
     try {
       if (authForm.isRegister) {
-        // Registro
         const userCredential = await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
-        // Crear perfil de usuario en Firestore
-        await setDoc(doc(db, "users", userCredential.user.uid), {
-          email: authForm.email,
-          role: 'user', // Por defecto todos son usuarios normales
-          createdAt: serverTimestamp()
-        });
+        // Intentar crear perfil (puede fallar si reglas son estrictas, pero no bloquea el flujo)
+        try {
+            await setDoc(doc(db, "users", userCredential.user.uid), {
+                email: authForm.email,
+                role: 'user',
+                createdAt: serverTimestamp()
+            });
+        } catch (docError) {
+            console.warn("Cuenta creada, pero no se pudo guardar perfil en Firestore:", docError);
+        }
       } else {
-        // Login
         await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
       }
-      setView('store');
+      // El cambio de vista lo maneja el useEffect de onAuthStateChanged
+      // Pero forzamos setView por si acaso la respuesta es instantánea
+      setView('store'); 
     } catch (error) {
       console.error("Auth error:", error);
       let msg = "Error de autenticación.";
       if (error.code === 'auth/wrong-password') msg = "Contraseña incorrecta.";
       if (error.code === 'auth/user-not-found') msg = "Usuario no encontrado.";
-      if (error.code === 'auth/email-already-in-use') msg = "El email ya está registrado.";
+      if (error.code === 'auth/email-already-in-use') msg = "El email ya está registrado. Intenta iniciar sesión.";
       setAuthForm({ ...authForm, error: msg });
     }
   };
@@ -319,14 +291,14 @@ export default function App() {
 
   const deleteOrder = async (orderId) => {
     if (!db) return;
-    if (window.confirm('¿Eliminar orden permanentemente? Esto no restaura el stock.')) {
+    if (window.confirm('¿Eliminar orden permanentemente?')) {
       try {
         await deleteDoc(doc(db, "orders", orderId));
       } catch (e) { console.error(e); alert("Error al eliminar"); }
     }
   };
 
-  // --- API DE SCRYFALL (Búsqueda de cartas) ---
+  // --- API DE SCRYFALL ---
   const fetchCards = async (searchQuery, isUserSearch = true) => {
     if (!searchQuery.trim()) return;
     setLoading(true);
@@ -334,24 +306,14 @@ export default function App() {
       const queryParams = isUserSearch 
         ? `q=${encodeURIComponent(searchQuery + " unique:prints")}&order=released`
         : `q=${encodeURIComponent(searchQuery)}&order=edhrec`;
-
       const response = await fetch(`https://api.scryfall.com/cards/search?${queryParams}`);
       const data = await response.json();
-      
-      if (data.data) {
-        setCards(data.data.filter(c => c.image_uris || c.card_faces)); 
-      } else {
-        setCards([]);
-      }
-    } catch (error) {
-      console.error("Error fetching cards:", error);
-      setCards([]);
-    } finally {
-      setLoading(false);
-    }
+      if (data.data) setCards(data.data.filter(c => c.image_uris || c.card_faces)); 
+      else setCards([]);
+    } catch (error) { console.error(error); setCards([]); } 
+    finally { setLoading(false); }
   };
 
-  // Autocompletado
   const handleQueryChange = async (e) => {
     const val = e.target.value;
     setQuery(val);
@@ -359,10 +321,7 @@ export default function App() {
       try {
         const response = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(val)}`);
         const data = await response.json();
-        if (data.data) {
-          setSuggestions(data.data);
-          setShowSuggestions(true);
-        }
+        if (data.data) { setSuggestions(data.data); setShowSuggestions(true); }
       } catch (error) { console.error(error); }
     } else { setShowSuggestions(false); }
   };
@@ -373,33 +332,26 @@ export default function App() {
     setTimeout(() => fetchCards(name, true), 50);
   };
 
-  // --- LÓGICA DE CARRITO (LOCAL) ---
+  // --- CARRITO ---
   const addToCart = (card, finish, price) => {
     const currentStock = getStock(card.id, finish);
+    // Permitir añadir si stock > 0 O si somos admin probando (opcional, aqui dejamos estricto)
+    // NOTA: Para demo inicial, si no hay stock definido en DB, asumimos 0.
+    
+    // Check local de carrito
     const itemInCart = cart.find(i => i.id === card.id && i.finish === finish);
     const quantityInCart = itemInCart ? itemInCart.quantity : 0;
 
     if (quantityInCart >= currentStock) {
-      alert("¡No hay suficiente stock disponible!");
+      alert(`¡Solo hay ${currentStock} disponibles!`);
       return;
     }
 
     setCart(prev => {
       if (itemInCart) {
-        return prev.map(item => 
-          (item.id === card.id && item.finish === finish) ? { ...item, quantity: item.quantity + 1 } : item
-        );
+        return prev.map(item => (item.id === card.id && item.finish === finish) ? { ...item, quantity: item.quantity + 1 } : item);
       }
-      return [...prev, { 
-        id: card.id, 
-        name: card.name, 
-        set: card.set_name, 
-        collector_number: card.collector_number,
-        image: getCardImage(card), 
-        finish, 
-        price: parseFloat(price), 
-        quantity: 1 
-      }];
+      return [...prev, { id: card.id, name: card.name, set: card.set_name, collector_number: card.collector_number, image: getCardImage(card), finish, price: parseFloat(price), quantity: 1 }];
     });
     setIsCartOpen(true);
   };
@@ -420,7 +372,7 @@ export default function App() {
     fetchCards(cardName, true);
   };
 
-  // --- RENDERIZADO (VIEWS) ---
+  // --- VISTAS ---
 
   const renderCardModal = () => {
     if (!selectedCard) return null;
@@ -612,7 +564,6 @@ export default function App() {
   );
 
   const renderProfile = () => {
-    // Si es admin, puede ver sus propias ordenes aqui tambien, pero tiene su panel aparte
     return (
       <div className="max-w-4xl mx-auto p-4 sm:p-8">
         <div className="mb-8 flex items-center gap-4">
