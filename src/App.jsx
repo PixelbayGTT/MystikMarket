@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
-  LogOut, Package, Settings, ClipboardList 
+  LogOut, Package, Settings, ClipboardList, ExternalLink 
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN SIMULADA (CAMBIAR A 'TRUE' CUANDO TENGAS FIREBASE) ---
@@ -21,9 +21,18 @@ const MOCK_ORDERS = [
     id: "ord-001", 
     date: new Date().toISOString(), 
     buyer: { name: "Juan Pérez", email: "juan@test.com" }, 
-    total: 45.50, 
+    total: 2.50, 
     status: "pagado",
-    items: [{ name: "Sol Ring", quantity: 1, finish: "normal" }] 
+    items: [{ 
+      id: "203f5900-3449-46ba-b83c-648c6f937666",
+      name: "Sol Ring", 
+      set: "Commander Legends",
+      collector_number: "415",
+      image: "https://cards.scryfall.io/normal/front/2/0/203f5900-3449-46ba-b83c-648c6f937666.jpg",
+      quantity: 1, 
+      finish: "normal",
+      price: 2.50
+    }] 
   }
 ];
 
@@ -233,12 +242,17 @@ export default function App() {
         );
       }
       return [...prev, { 
-        id: card.id, name: card.name, set: card.set_name, 
-        image: getCardImage(card), finish, price: parseFloat(price), quantity: 1 
+        id: card.id, 
+        name: card.name, 
+        set: card.set_name, 
+        collector_number: card.collector_number, // Guardamos el número
+        image: getCardImage(card), 
+        finish, 
+        price: parseFloat(price), 
+        quantity: 1 
       }];
     });
     setIsCartOpen(true);
-    // setSelectedCard(null); // Opcional: cerrar modal al comprar
   };
 
   const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
@@ -319,6 +333,7 @@ export default function App() {
               <div className="flex items-center gap-2 mb-4">
                  <Badge color="bg-purple-600">{selectedCard.set_name}</Badge>
                  <span className="text-slate-400 text-sm capitalize">{selectedCard.rarity}</span>
+                 <span className="text-slate-500 text-xs font-mono">#{selectedCard.collector_number}</span>
               </div>
               
               <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 text-slate-300 font-serif leading-relaxed text-sm md:text-base">
@@ -441,7 +456,7 @@ export default function App() {
                 <th className="p-4">ID</th>
                 <th className="p-4">Fecha</th>
                 <th className="p-4">Comprador</th>
-                <th className="p-4">Items</th>
+                <th className="p-4 w-1/2">Items</th>
                 <th className="p-4">Total</th>
                 <th className="p-4">Estado</th>
               </tr>
@@ -449,22 +464,48 @@ export default function App() {
             <tbody className="divide-y divide-slate-700">
               {orders.map(order => (
                 <tr key={order.id} className="hover:bg-slate-700/50 transition-colors">
-                  <td className="p-4 font-mono text-purple-400">{order.id}</td>
-                  <td className="p-4">{new Date(order.date).toLocaleDateString()}</td>
-                  <td className="p-4">
+                  <td className="p-4 font-mono text-purple-400 align-top">{order.id}</td>
+                  <td className="p-4 align-top">{new Date(order.date).toLocaleDateString()}</td>
+                  <td className="p-4 align-top">
                     <div className="text-white font-medium">{order.buyer.name}</div>
                     <div className="text-xs">{order.buyer.email}</div>
                   </td>
                   <td className="p-4">
-                    {order.items.map((item, i) => (
-                      <div key={i} className="flex items-center gap-2 mb-1 last:mb-0">
-                        <Badge color={item.finish === 'foil' ? 'bg-yellow-600' : 'bg-slate-600'}>{item.finish === 'foil' ? 'F' : 'N'}</Badge>
-                        <span className="text-slate-300">{item.quantity}x {item.name}</span>
-                      </div>
-                    ))}
+                    <div className="space-y-3">
+                      {order.items.map((item, i) => (
+                        <div key={i} className="flex items-start gap-3 bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
+                          {/* Item Thumbnail */}
+                          <div className="relative w-10 h-14 flex-shrink-0 bg-black rounded overflow-hidden shadow-sm">
+                             <img src={item.image} alt="" className="w-full h-full object-cover"/>
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start">
+                               <p className="text-white text-sm font-bold truncate">{item.name}</p>
+                               <span className="text-green-400 font-mono text-xs">${item.price}</span>
+                            </div>
+                            
+                            {/* Version Info */}
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400 mt-1">
+                               <span title="Set Name">{item.set}</span>
+                               <span className="text-slate-600">•</span>
+                               <span title="Collector Number" className="font-mono">#{item.collector_number || '?'}</span>
+                            </div>
+
+                            {/* Finish & Quantity */}
+                            <div className="flex items-center gap-2 mt-1.5">
+                               <Badge color={item.finish === 'foil' ? 'bg-gradient-to-r from-yellow-600 to-yellow-500 text-black shadow-sm' : 'bg-slate-600 text-slate-200'}>
+                                  {item.finish === 'foil' ? 'Foil' : 'Normal'}
+                               </Badge>
+                               <span className="text-xs font-bold text-slate-200 bg-slate-700 px-1.5 py-0.5 rounded">x{item.quantity}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </td>
-                  <td className="p-4 text-green-400 font-bold">${order.total.toFixed(2)}</td>
-                  <td className="p-4"><Badge color="bg-blue-600">{order.status}</Badge></td>
+                  <td className="p-4 text-green-400 font-bold align-top">${order.total.toFixed(2)}</td>
+                  <td className="p-4 align-top"><Badge color="bg-blue-600">{order.status}</Badge></td>
                 </tr>
               ))}
             </tbody>
