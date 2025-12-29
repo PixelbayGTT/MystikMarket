@@ -1,5 +1,3 @@
-import { db } from './firebase'; 
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
@@ -34,6 +32,7 @@ const firebaseConfig = {
 let app = null;
 let auth = null;
 let db = null;
+let firebaseError = null;
 
 const isConfigured = firebaseConfig.apiKey !== "TU_API_KEY";
 
@@ -43,7 +42,8 @@ if (isConfigured) {
     auth = getAuth(app);
     db = getFirestore(app);
   } catch (e) {
-    console.error("Error inicializando Firebase. Verifica tu configuración:", e);
+    console.error("Error crítico inicializando Firebase:", e);
+    firebaseError = e.message;
   }
 }
 
@@ -69,7 +69,7 @@ const Badge = ({ children, color = 'bg-blue-600' }) => (
 // --- Componente Principal ---
 
 export default function App() {
-  // Si no está configurado, mostramos pantalla de ayuda
+  // Pantalla de Error de Configuración
   if (!isConfigured) {
     return (
       <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8 text-center">
@@ -80,12 +80,19 @@ export default function App() {
             La aplicación no puede iniciar porque falta la conexión a Firebase.
           </p>
           <div className="bg-slate-900 p-4 rounded text-left text-sm font-mono text-slate-400 mb-6 overflow-x-auto">
-            <p className="text-green-400">// Edita el archivo App.jsx y busca:</p>
-            <p>const firebaseConfig = &#123;</p>
-            <p>&nbsp;&nbsp;apiKey: "TU_API_KEY", <span className="text-yellow-500">&lt;-- CAMBIAR ESTO</span></p>
-            <p>&#125;;</p>
+            <p className="text-green-400">// Edita el archivo App.jsx:</p>
+            <p>apiKey: "TU_API_KEY", <span className="text-yellow-500">&lt;-- REEMPLAZAR</span></p>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Pantalla de Error de Inicialización
+  if (firebaseError) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+        <div className="text-red-400">Error iniciando Firebase: {firebaseError}</div>
       </div>
     );
   }
@@ -111,80 +118,100 @@ export default function App() {
 
   const wrapperRef = useRef(null);
 
-  // --- SINCRONIZACIÓN FIREBASE ---
+  // --- SINCRONIZACIÓN FIREBASE (BLINDADA) ---
 
   // 1. Autenticación
   useEffect(() => {
-    // GUARDIA: Si auth no se inicializó, no intentamos usarlo
     if (!auth) return;
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        let role = 'user';
-        try {
-          // GUARDIA: Verificar si db existe antes de usarlo
+    let unsubscribe;
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        if (firebaseUser) {
+          let role = 'user';
           if (db) {
-            const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
-            if (userSnap.exists()) {
-              role = userSnap.data().role || 'user';
+            try {
+              const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+              if (userSnap.exists()) {
+                role = userSnap.data().role || 'user';
+              }
+            } catch (e) {
+              console.warn("Error leyendo rol:", e);
+              if (e.code === 'permission-denied') setPermissionError(true);
             }
           }
-        } catch (e) {
-          console.warn("No se pudo leer el rol, asignando default 'user'", e);
-          if (e.code === 'permission-denied') setPermissionError(true);
+          setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role });
+          setCheckoutForm(prev => ({ ...prev, email: firebaseUser.email }));
+        } else {
+          setUser(null);
         }
-        setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role });
-        setCheckoutForm(prev => ({ ...prev, email: firebaseUser.email }));
-      } else {
-        setUser(null);
-      }
-    });
-    return () => unsubscribe();
+      });
+    } catch (e) {
+      console.error("Error en auth listener:", e);
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
   }, []);
 
   // 2. Inventario
   useEffect(() => {
-    // GUARDIA: Si db no se inicializó, no intentamos usarlo
     if (!db) return;
 
-    const q = collection(db, "inventory");
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const inv = {};
-      snapshot.forEach(doc => inv[doc.id] = doc.data());
-      setInventory(inv);
-      setPermissionError(false); 
-    }, (error) => {
-      console.error("Error inventario:", error);
-      if (error.code === 'permission-denied') setPermissionError(true);
-    });
-    return () => unsubscribe();
+    let unsubscribe;
+    try {
+      const q = collection(db, "inventory");
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        const inv = {};
+        snapshot.forEach(doc => inv[doc.id] = doc.data());
+        setInventory(inv);
+        setPermissionError(false);
+      }, (error) => {
+        console.error("Error inventario:", error);
+        if (error.code === 'permission-denied') setPermissionError(true);
+      });
+    } catch (e) {
+      console.error("Error creando listener de inventario:", e);
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
   }, []);
 
   // 3. Órdenes
   useEffect(() => {
-    // GUARDIA: Si db o user no existen, no hacemos nada
-    if (!user || !db) return;
+    if (!db || !user) return;
 
-    const q = query(collection(db, "orders"), orderBy("date", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allOrders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
-      }));
-      
-      if (user.role === 'admin') {
-        setOrders(allOrders);
-      } else {
-        setOrders(allOrders.filter(o => o.buyer.uid === user.uid || o.buyer.email === user.email));
-      }
-    }, (error) => {
-      if (error.code === 'permission-denied') setPermissionError(true);
-    });
-    return () => unsubscribe();
+    let unsubscribe;
+    try {
+      const q = query(collection(db, "orders"), orderBy("date", "desc"));
+      unsubscribe = onSnapshot(q, (snapshot) => {
+        const allOrders = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
+        }));
+        
+        if (user.role === 'admin') {
+          setOrders(allOrders);
+        } else {
+          setOrders(allOrders.filter(o => o.buyer.uid === user.uid || o.buyer.email === user.email));
+        }
+      }, (error) => {
+        if (error.code === 'permission-denied') setPermissionError(true);
+      });
+    } catch (e) {
+      console.error("Error creando listener de ordenes:", e);
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
   }, [user]);
 
-  // Carga inicial
+  // Carga inicial de cartas
   useEffect(() => {
     fetchCards('format:commander year>=2023', false);
     const handleClickOutside = (event) => {
@@ -216,7 +243,7 @@ export default function App() {
 
   const deleteOrder = async (orderId) => {
     if (!db) return;
-    if (window.confirm('¿Eliminar orden permanentemente? Esto no restaura el stock.')) {
+    if (window.confirm('¿Eliminar orden permanentemente?')) {
       try {
         await deleteDoc(doc(db, "orders", orderId));
       } catch (e) { console.error(e); alert("Error al eliminar"); }
@@ -226,10 +253,9 @@ export default function App() {
   const handleAuth = async (e) => {
     e.preventDefault();
     if (!auth) {
-      setAuthForm({ ...authForm, error: "Error: Firebase Auth no está listo." });
+      setAuthForm({ ...authForm, error: "Firebase no está listo." });
       return;
     }
-
     setAuthForm({ ...authForm, error: '' });
     try {
       if (authForm.isRegister) {
@@ -248,19 +274,17 @@ export default function App() {
     } catch (error) {
       console.error(error);
       let msg = "Error desconocido.";
-      if (error.code === 'auth/email-already-in-use') msg = "Este correo ya está registrado.";
-      if (error.code === 'auth/weak-password') msg = "La contraseña debe tener al menos 6 caracteres.";
-      if (error.code === 'auth/invalid-credential') msg = "Correo o contraseña incorrectos.";
+      if (error.code === 'auth/email-already-in-use') msg = "Correo ya registrado.";
+      if (error.code === 'auth/wrong-password') msg = "Contraseña incorrecta.";
+      if (error.code === 'auth/invalid-credential') msg = "Datos incorrectos.";
+      if (error.code === 'auth/weak-password') msg = "Contraseña muy débil (min 6 chars).";
       setAuthForm({ ...authForm, error: msg });
     }
   };
 
   const handleCheckout = async (e) => {
     e.preventDefault();
-    if (!db) {
-      alert("No hay conexión con la base de datos.");
-      return;
-    }
+    if (!db) { alert("Sin conexión a BD."); return; }
     setLoading(true);
     try {
       const batch = writeBatch(db);
@@ -329,7 +353,6 @@ export default function App() {
     const stock = getStock(card.id, finish);
     const inCart = cart.find(i => i.id === card.id && i.finish === finish)?.quantity || 0;
     
-    // Si no es admin, validamos stock
     if (stock <= inCart && user?.role !== 'admin') {
        alert("No hay suficiente stock disponible.");
        return;
@@ -580,29 +603,9 @@ export default function App() {
               <h3 className="text-xl font-bold text-red-400">¡Acceso Bloqueado por Firebase!</h3>
             </div>
             <p className="text-slate-300 mb-4">
-              Tu base de datos está en <strong>Modo Producción</strong> y está rechazando las conexiones. 
-              Necesitas abrir los permisos para poder usar la App.
+              Tu base de datos está rechazando las conexiones. 
+              Necesitas abrir los permisos en la consola de Firebase.
             </p>
-            <div className="bg-slate-950 p-4 rounded-lg font-mono text-xs overflow-x-auto border border-slate-800">
-              <p className="text-slate-500 mb-2">// Copia este código y pégalo en Firebase Console {'>'} Firestore {'>'} Reglas:</p>
-              <div className="text-green-400">
-                <p>rules_version = '2';</p>
-                <p>service cloud.firestore &#123;</p>
-                <p>&nbsp;&nbsp;match /databases/&#123;database&#125;/documents &#123;</p>
-                <p>&nbsp;&nbsp;&nbsp;&nbsp;match /&#123;document=**&#125; &#123;</p>
-                <p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;allow read, write: if true;</p>
-                <p>&nbsp;&nbsp;&nbsp;&nbsp;&#125;</p>
-                <p>&nbsp;&nbsp;&#125;</p>
-                <p>&#125;</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!db && (
-          <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded-xl mb-6 text-center flex items-center justify-center gap-2">
-            <AlertTriangle size={24} />
-            <span>Atención: Configura tus credenciales de Firebase en el código para que la App funcione.</span>
           </div>
         )}
 
