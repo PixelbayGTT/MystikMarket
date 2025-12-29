@@ -3,7 +3,7 @@ import {
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
-  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle
+  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle, Eye
 } from 'lucide-react';
 
 // --- IMPORTACIONES DE FIREBASE ---
@@ -14,7 +14,7 @@ import {
 } from "firebase/auth";
 import { 
   getFirestore, collection, doc, getDoc, setDoc, addDoc, 
-  updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch, query, orderBy 
+  updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch, query, orderBy, increment 
 } from "firebase/firestore";
 
 // --- CONFIGURACIÓN ---
@@ -120,6 +120,9 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   
+  // Estado para el modal de detalle de orden (Admin)
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
 
@@ -203,12 +206,11 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
 
-  // 3. Órdenes (CORREGIDO: Sin orderBy en Query, ordenado en cliente)
+  // 3. Órdenes
   useEffect(() => {
     if (!db || !user) return;
     let unsubscribe;
     try {
-      // NOTA: Quitamos orderBy de aquí para evitar errores de índices faltantes
       const q = collection(db, "orders");
       
       unsubscribe = onSnapshot(q, (snapshot) => {
@@ -224,7 +226,6 @@ export default function App() {
         if (user.role === 'admin') {
           setOrders(allOrders);
         } else {
-          // Filtro por UID o Email
           setOrders(allOrders.filter(o => 
             o.buyer?.uid === user.uid || o.buyer?.email === user.email
           ));
@@ -266,12 +267,43 @@ export default function App() {
     } catch (e) { console.error(e); alert("Error al actualizar estado"); }
   };
 
+  // Función para eliminar orden Y restaurar stock
   const deleteOrder = async (orderId) => {
     if (!db) return;
-    if (window.confirm('¿Eliminar orden permanentemente?')) {
+    if (window.confirm('¿Eliminar orden permanentemente? El stock será restaurado.')) {
       try {
-        await deleteDoc(doc(db, "orders", orderId));
-      } catch (e) { console.error(e); alert("Error al eliminar"); }
+        const orderRef = doc(db, "orders", orderId);
+        // 1. Obtener la orden para saber qué items restaurar
+        const orderSnap = await getDoc(orderRef);
+        
+        if (!orderSnap.exists()) {
+            alert("La orden no existe.");
+            return;
+        }
+
+        const orderData = orderSnap.data();
+        const batch = writeBatch(db);
+
+        // 2. Restaurar Stock
+        orderData.items.forEach(item => {
+            const itemRef = doc(db, "inventory", item.id);
+            // Usamos increment para sumar de forma atómica
+            batch.update(itemRef, {
+                [item.finish]: increment(item.quantity)
+            });
+        });
+
+        // 3. Eliminar la orden
+        batch.delete(orderRef);
+
+        await batch.commit();
+        // Si estaba abierto el modal de esa orden, cerrarlo
+        if (selectedOrder?.id === orderId) setSelectedOrder(null);
+
+      } catch (e) { 
+          console.error(e); 
+          alert("Error al eliminar y restaurar stock: " + e.message); 
+      }
     }
   };
 
@@ -319,7 +351,10 @@ export default function App() {
         batch.update(ref, { [item.finish]: stock - item.quantity });
       }
 
-      const orderRef = doc(collection(db, "orders"));
+      // GENERAR ID PERSONALIZADO: MM- + 10 Dígitos
+      const orderId = `MM-${Math.floor(Math.random() * 10000000000).toString().padStart(10, '0')}`;
+      const orderRef = doc(db, "orders", orderId); // Usar ID personalizado en la referencia
+
       const newOrder = {
         date: serverTimestamp(),
         buyer: { 
@@ -335,7 +370,7 @@ export default function App() {
       batch.set(orderRef, newOrder);
       await batch.commit();
       
-      setLastOrderId(orderRef.id);
+      setLastOrderId(orderId);
       setLastOrderTotal(currentTotal);
       
       setCart([]);
@@ -427,7 +462,6 @@ export default function App() {
     const pNormalUSD = card.prices?.usd;
     const pFoilUSD = card.prices?.usd_foil;
     
-    // CONVERSIÓN A QUETZALES
     const pNormal = pNormalUSD ? parseFloat(pNormalUSD) * EXCHANGE_RATE : null;
     const pFoil = pFoilUSD ? parseFloat(pFoilUSD) * EXCHANGE_RATE : null;
 
@@ -444,20 +478,16 @@ export default function App() {
         <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => openCardModal(card)}>
           <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
           {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
-          
           {sNormal === 0 && sFoil === 0 && (
             <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
               <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase -rotate-12 border-2 border-white">Agotado</span>
             </div>
           )}
         </div>
-        
         <div className="p-3 flex-1 flex flex-col">
           <h3 className="font-bold text-white text-sm truncate">{card.name}</h3>
           <p className="text-slate-400 text-xs mb-2 truncate">{card.set_name}</p>
-          
           <div className="mt-auto space-y-1.5">
-            {/* Fila Normal */}
             <div className={`flex justify-between items-center px-2 py-1 rounded ${disableNormal ? 'bg-slate-900/30 opacity-70' : 'bg-slate-900/50'}`}>
               <div className="flex flex-col">
                 <span className="text-slate-300 text-xs">Normal</span>
@@ -471,15 +501,12 @@ export default function App() {
                     onClick={() => addToCart(card, 'normal', pNormal)} 
                     disabled={disableNormal} 
                     className={`p-1 rounded text-white transition-colors ${disableNormal ? 'bg-slate-700 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500'}`}
-                    title={disableNormal ? "Sin stock suficiente" : "Agregar Normal"}
                   >
                     <ShoppingCart size={12}/>
                   </button>
                 </div>
               ) : <span className="text-slate-600 text-[10px]">--</span>}
             </div>
-
-            {/* Fila Foil */}
             <div className={`flex justify-between items-center px-2 py-1 rounded border ${disableFoil ? 'border-transparent bg-slate-900/30 opacity-70' : 'border-purple-500/30 bg-gradient-to-r from-slate-900/50 to-purple-900/20'}`}>
                <div className="flex flex-col">
                   <div className="flex items-center gap-0.5">
@@ -496,7 +523,6 @@ export default function App() {
                     onClick={() => addToCart(card, 'foil', pFoil)} 
                     disabled={disableFoil} 
                     className={`p-1 rounded text-white transition-colors ${disableFoil ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
-                    title={disableFoil ? "Sin stock suficiente" : "Agregar Foil"}
                   >
                     <ShoppingCart size={12}/>
                   </button>
@@ -513,8 +539,6 @@ export default function App() {
     <div className="max-w-4xl mx-auto p-4 sm:p-8">
       <h2 className="text-3xl font-bold text-white mb-8 flex items-center gap-3"><ShieldCheck className="text-green-500" size={32} /> Finalizar Compra</h2>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        {/* Resumen */}
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 h-fit">
             <h3 className="text-xl font-bold text-slate-200 mb-4">Resumen del Pedido</h3>
             <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
@@ -543,8 +567,6 @@ export default function App() {
                 <span className="text-green-400">Q{cartTotal.toFixed(2)}</span>
             </div>
         </div>
-        
-        {/* Formulario */}
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
             <h3 className="text-xl font-bold text-slate-200 mb-4">Datos de Envío</h3>
             <form onSubmit={handleCheckout} className="space-y-4">
@@ -564,7 +586,6 @@ export default function App() {
                   <label className="block text-slate-400 text-sm mb-1">Dirección de Entrega</label>
                   <textarea required className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-24" value={checkoutForm.address} onChange={e => setCheckoutForm({...checkoutForm, address: e.target.value})} />
                 </div>
-                
                 <Button type="submit" variant="success" className="w-full mt-6 py-3" disabled={loading}>
                   {loading ? 'Procesando...' : `Confirmar Pedido (Q${cartTotal.toFixed(2)})`}
                 </Button>
@@ -579,29 +600,84 @@ export default function App() {
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
       <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mb-6 animate-bounce"><CheckCircle size={48} className="text-white" /></div>
       <h2 className="text-4xl font-bold text-white mb-2">¡Orden Ingresada!</h2>
-      <p className="text-slate-400 mb-8 text-lg">Tu pedido #{lastOrderId?.substring(0,8)} ha sido reservado.</p>
-      
+      <p className="text-slate-400 mb-8 text-lg">Tu pedido #{lastOrderId} ha sido reservado.</p>
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 max-w-md w-full mb-8">
         <h3 className="text-white font-bold mb-4">Siguiente Paso: Realizar Pago</h3>
-        <p className="text-slate-400 text-sm mb-6">
-          Para confirmar tu pedido y coordinar el envío, envíanos un mensaje por WhatsApp con el detalle de tu orden.
-        </p>
-        
+        <p className="text-slate-400 text-sm mb-6">Para confirmar tu pedido y coordinar el envío, envíanos un mensaje por WhatsApp con el detalle de tu orden.</p>
         <a 
           href={`https://wa.me/50246903693?text=Hola, acabo de realizar la orden %23${lastOrderId}. Mi nombre es ${checkoutForm.name}. El total es Q${lastOrderTotal.toFixed(2)}. Quisiera coordinar el pago.`}
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="w-full block"
+          target="_blank" rel="noopener noreferrer" className="w-full block"
         >
-          <Button variant="whatsapp" className="w-full py-3 text-lg">
-            <MessageCircle size={24} /> Enviar mensaje a WhatsApp
-          </Button>
+          <Button variant="whatsapp" className="w-full py-3 text-lg"><MessageCircle size={24} /> Enviar mensaje a WhatsApp</Button>
         </a>
       </div>
-
       <Button onClick={() => setView('store')} variant="secondary">Volver a la Tienda</Button>
     </div>
   );
+
+  const renderOrderModal = () => {
+    if (!selectedOrder) return null;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={() => setSelectedOrder(null)}>
+        <div className="bg-slate-900 rounded-xl w-full max-w-3xl overflow-hidden shadow-2xl border border-slate-700 max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="p-6 border-b border-slate-700 flex justify-between items-center bg-slate-800">
+            <div>
+              <h2 className="text-2xl font-bold text-white">Orden #{selectedOrder.id}</h2>
+              <p className="text-slate-400 text-sm">{new Date(selectedOrder.date).toLocaleString()}</p>
+            </div>
+            <button onClick={() => setSelectedOrder(null)} className="text-slate-400 hover:text-white"><X size={24}/></button>
+          </div>
+          
+          <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <h3 className="text-purple-400 font-bold mb-3 flex items-center gap-2"><User size={18}/> Cliente</h3>
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p><span className="text-slate-500 block text-xs uppercase">Nombre</span> {selectedOrder.buyer.name}</p>
+                  <p><span className="text-slate-500 block text-xs uppercase">Email</span> {selectedOrder.buyer.email}</p>
+                  <p><span className="text-slate-500 block text-xs uppercase">Teléfono</span> {selectedOrder.buyer.phone || 'No especificado'}</p>
+                </div>
+              </div>
+              <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                <h3 className="text-purple-400 font-bold mb-3 flex items-center gap-2"><Truck size={18}/> Envío</h3>
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p><span className="text-slate-500 block text-xs uppercase">Dirección</span> {selectedOrder.buyer.address}</p>
+                  <p><span className="text-slate-500 block text-xs uppercase">Estado</span> <Badge color="bg-blue-600">{selectedOrder.status}</Badge></p>
+                </div>
+              </div>
+            </div>
+
+            <h3 className="text-white font-bold mb-4">Productos</h3>
+            <div className="bg-slate-800 rounded-lg border border-slate-700 overflow-hidden mb-6">
+              {selectedOrder.items.map((item, i) => (
+                <div key={i} className="flex gap-4 p-4 border-b border-slate-700 last:border-0 items-center">
+                  <img src={item.image} alt="" className="w-12 h-16 object-cover rounded bg-black"/>
+                  <div className="flex-1">
+                    <p className="text-white font-bold text-sm">{item.name}</p>
+                    <p className="text-slate-400 text-xs">{item.set} • {item.finish === 'foil' ? 'Foil' : 'Normal'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-slate-300 text-xs">x{item.quantity}</p>
+                    <p className="text-white font-bold text-sm">Q{item.price.toFixed(2)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="flex justify-end items-center gap-4 text-xl">
+              <span className="text-slate-400">Total:</span>
+              <span className="text-green-400 font-bold">Q{selectedOrder.total.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-slate-700 bg-slate-800 flex justify-end gap-2">
+             <Button variant="secondary" onClick={() => setSelectedOrder(null)}>Cerrar</Button>
+             <Button variant="danger" onClick={() => deleteOrder(selectedOrder.id)}>Eliminar Orden</Button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderAdminOrders = () => (
     <div className="max-w-6xl mx-auto p-4">
@@ -612,44 +688,22 @@ export default function App() {
             <thead className="bg-slate-900 text-slate-200 uppercase font-bold">
               <tr>
                 <th className="p-4">Fecha/Cliente</th>
-                <th className="p-4 w-1/2">Items</th>
                 <th className="p-4">Total</th>
                 <th className="p-4">Estado</th>
-                <th className="p-4">Acciones</th>
+                <th className="p-4 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
               {orders.map(order => (
                 <tr key={order.id} className="hover:bg-slate-700/50 transition-colors">
-                  <td className="p-4 align-top">
+                  <td className="p-4">
                     <div className="text-xs text-slate-500 mb-1">{new Date(order.date).toLocaleString()}</div>
                     <div className="text-white font-medium">{order.buyer.name}</div>
                     <div className="text-xs">{order.buyer.email}</div>
-                    <div className="text-xs text-slate-500">{order.buyer.phone}</div>
-                    <div className="text-xs font-mono text-purple-400 mt-1">{order.id.substring(0,8)}...</div>
+                    <div className="text-xs font-mono text-purple-400 mt-1">{order.id}</div>
                   </td>
+                  <td className="p-4 text-green-400 font-bold">Q{order.total.toFixed(2)}</td>
                   <td className="p-4">
-                    <div className="space-y-3">
-                      {order.items.map((item, i) => (
-                        <div key={i} className="flex items-start gap-3 bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
-                          <img src={item.image} alt="" className="w-8 h-10 object-cover rounded bg-black"/>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between">
-                               <p className="text-white text-xs font-bold truncate">{item.name}</p>
-                               <span className="text-green-400 font-mono text-xs">Q{item.price.toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                               <span className="text-[10px] text-slate-400">{item.set} #{item.collector_number}</span>
-                               <Badge color={item.finish === 'foil' ? 'bg-yellow-600' : 'bg-slate-600'}>{item.finish}</Badge>
-                               <span className="text-xs font-bold text-slate-200">x{item.quantity}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="p-4 text-green-400 font-bold align-top">Q{order.total.toFixed(2)}</td>
-                  <td className="p-4 align-top">
                     <select 
                       value={order.status}
                       onChange={(e) => updateOrderStatus(order.id, e.target.value)}
@@ -662,10 +716,15 @@ export default function App() {
                       <option value="cancelado">Cancelado</option>
                     </select>
                   </td>
-                  <td className="p-4 align-top">
-                    <button onClick={() => deleteOrder(order.id)} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors">
-                      <Trash2 size={16} />
-                    </button>
+                  <td className="p-4 text-right">
+                    <div className="flex justify-end gap-2">
+                      <button onClick={() => setSelectedOrder(order)} className="p-2 text-slate-400 hover:text-blue-400 hover:bg-slate-700 rounded transition-colors" title="Ver Detalles">
+                        <Eye size={18} />
+                      </button>
+                      <button onClick={() => deleteOrder(order.id)} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors" title="Eliminar">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -788,7 +847,7 @@ export default function App() {
                             <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
                                 <div>
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-lg font-bold text-white">Pedido #{order.id.substring(0, 8)}...</span>
+                                        <span className="text-lg font-bold text-white">Pedido #{order.id}</span>
                                         <Badge color={
                                             order.status === 'pagado' ? 'bg-green-600' : 
                                             order.status === 'cancelado' ? 'bg-red-600' : 
@@ -1040,6 +1099,9 @@ export default function App() {
            </div>
         </div>
       )}
+
+      {/* Modal de Detalle de Orden (Admin) */}
+      {renderOrderModal()}
 
     </div>
   );
