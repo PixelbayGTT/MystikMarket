@@ -174,7 +174,7 @@ const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) 
                  <div className="flex items-center gap-1">
                     {availableF > 0 && <QuantitySelector qty={qtyFoil} setQty={setQtyFoil} max={availableF} disabled={availableF <= 0} />}
                     <button 
-                      onClick={() => { e.stopPropagation(); addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
+                      onClick={(e) => { e.stopPropagation(); addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
                       disabled={availableF <= 0} 
                       className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableF <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
                     >
@@ -295,7 +295,18 @@ export default function App() {
   
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [cart, setCart] = useState([]);
+  
+  // INICIALIZAR CARRITO CON LOCALSTORAGE PARA PERSISTENCIA
+  const [cart, setCart] = useState(() => {
+    try {
+      const savedCart = localStorage.getItem('mtg_cart');
+      return savedCart ? JSON.parse(savedCart) : [];
+    } catch (e) {
+      console.warn("Error leyendo carrito:", e);
+      return [];
+    }
+  });
+
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   
@@ -312,6 +323,11 @@ export default function App() {
   const [sortOption, setSortOption] = useState('released'); 
 
   const wrapperRef = useRef(null);
+
+  // --- EFECTO: GUARDAR CARRITO EN LOCALSTORAGE ---
+  useEffect(() => {
+    localStorage.setItem('mtg_cart', JSON.stringify(cart));
+  }, [cart]);
 
   // --- MANEJO DE HISTORIAL ---
   useEffect(() => {
