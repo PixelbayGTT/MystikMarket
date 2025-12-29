@@ -118,6 +118,47 @@ export default function App() {
 
   const wrapperRef = useRef(null);
 
+  // --- MANEJO DE HISTORIAL (BACK BUTTON) ---
+  useEffect(() => {
+    // Escuchar el evento popstate (cuando el usuario da click a Atrás en el navegador)
+    const handlePopState = (event) => {
+      // Si tenemos una carta seleccionada y el usuario da atrás, cerramos el modal
+      if (selectedCard) {
+        setSelectedCard(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [selectedCard]);
+
+  // Funciones auxiliares para abrir/cerrar modal interactuando con el historial
+  const openCardModal = (card) => {
+    // Agregamos un estado al historial para que el botón "Atrás" funcione
+    window.history.pushState({ cardId: card.id }, '', `#${card.id}`);
+    setSelectedCard(card);
+  };
+
+  const closeCardModal = () => {
+    // Al cerrar manualmente, retrocedemos en el historial para quitar el hash de la URL
+    // Esto disparará 'popstate', que a su vez pondrá selectedCard en null
+    window.history.back();
+  };
+
+  // Función para ir al Home y resetear todo
+  const goHome = () => {
+    if (selectedCard) {
+      setSelectedCard(null);
+      // Limpiar hash si existe
+      if (window.location.hash) {
+         window.history.replaceState(null, '', ' ');
+      }
+    }
+    setView('store');
+    setQuery('');
+    fetchCards('format:commander year>=2023', false);
+  };
+
   // --- SINCRONIZACIÓN FIREBASE (BLINDADA) ---
 
   // 1. Autenticación
@@ -353,7 +394,6 @@ export default function App() {
     const stock = getStock(card.id, finish);
     const inCart = cart.find(i => i.id === card.id && i.finish === finish)?.quantity || 0;
     
-    // Verificación de stock incluyendo lo que ya está en el carrito
     if (stock <= inCart && user?.role !== 'admin') {
        alert(`Solo hay ${stock} disponibles y ya tienes ${inCart} en tu carrito.`);
        return;
@@ -379,18 +419,15 @@ export default function App() {
     const pNormal = card.prices?.usd, pFoil = card.prices?.usd_foil;
     const sNormal = getStock(card.id, 'normal'), sFoil = getStock(card.id, 'foil');
     
-    // Cantidades en carrito
     const inCartNormal = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
     const inCartFoil = cart.find(i => i.id === card.id && i.finish === 'foil')?.quantity || 0;
 
-    // Lógica de deshabilitado (Stock agotado O stock cubierto por carrito)
-    // El admin siempre puede agregar para pruebas
     const disableNormal = (sNormal <= 0) || (sNormal <= inCartNormal && user?.role !== 'admin');
     const disableFoil = (sFoil <= 0) || (sFoil <= inCartFoil && user?.role !== 'admin');
     
     return (
       <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative">
-        <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => setSelectedCard(card)}>
+        <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => openCardModal(card)}>
           <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
           {/* Badge de RL */}
           {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
@@ -597,7 +634,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-20">
       {/* Navbar */}
       <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-4 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-2 cursor-pointer font-bold text-xl text-white" onClick={() => setView('store')}>
+        <div className="flex items-center gap-2 cursor-pointer font-bold text-xl text-white" onClick={goHome}>
           {/* ICONO RESTAURADO CON GLOW */}
           <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-xl shadow-[0_0_15px_rgba(147,51,234,0.5)]">M</div>
           <span className="hidden sm:block">MysticMarket</span>
@@ -749,7 +786,7 @@ export default function App() {
       
       {/* Modal Detalle */}
       {selectedCard && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={() => setSelectedCard(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={closeCardModal}>
            <div className="bg-slate-900 p-6 rounded-xl max-w-4xl w-full flex flex-col md:flex-row gap-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
               <div className="md:w-1/2 flex justify-center">
                  <img src={selectedCard.image_uris?.normal || selectedCard.card_faces?.[0]?.image_uris?.normal} className="rounded-lg shadow-2xl max-h-[60vh]" alt=""/>
@@ -757,7 +794,7 @@ export default function App() {
               <div className="flex-1 flex flex-col">
                 <div className="flex justify-between items-start">
                    <h2 className="text-3xl font-bold text-white mb-2">{selectedCard.name}</h2>
-                   <button onClick={() => setSelectedCard(null)} className="text-slate-400 hover:text-white"><X/></button>
+                   <button onClick={closeCardModal} className="text-slate-400 hover:text-white"><X/></button>
                 </div>
                 <div className="flex gap-2 mb-4">
                    <Badge>{selectedCard.set_name}</Badge>
@@ -774,7 +811,7 @@ export default function App() {
                 </div>
 
                 <div className="mt-auto space-y-3">
-                   <Button variant="outline" onClick={() => { setQuery(selectedCard.name); setSelectedCard(null); fetchCards(selectedCard.name, true); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
+                   <Button variant="outline" onClick={() => { setQuery(selectedCard.name); closeCardModal(); fetchCards(selectedCard.name, true); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
                    
                    {/* Normal Row en Modal */}
                    <div className="bg-slate-800 p-4 rounded-lg flex items-center justify-between">
