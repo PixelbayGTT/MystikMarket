@@ -513,24 +513,23 @@ export default function App() {
             className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105 bg-slate-800"
             style={{ backgroundImage: `url('${BANNER_CONFIG.image}')` }}
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-10 md:p-16">
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-12 md:p-16">
             <div className="max-w-2xl animate-in slide-in-from-left duration-700">
-               <div className="flex items-center gap-2 mb-2">
-                 <span className="bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1"><Star size={12} fill="black"/> Destacado</span>
-               </div>
-               <h1 className="text-4xl md:text-6xl font-extrabold text-white mb-4 leading-tight drop-shadow-lg">
+               <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-4 leading-tight drop-shadow-lg">
                  {BANNER_CONFIG.title}
                </h1>
-               <p className="text-lg md:text-xl text-slate-300 mb-8 max-w-lg drop-shadow-md">
+               <p className="text-base md:text-lg text-slate-300 mb-6 max-w-lg drop-shadow-md">
                  {BANNER_CONFIG.subtitle}
                </p>
-               <Button 
-                 variant="white"
-                 onClick={() => { setQuery(BANNER_CONFIG.actionQuery); fetchCards(BANNER_CONFIG.actionQuery, true); }} 
-                 className="text-lg px-8 py-4"
-               >
-                 {BANNER_CONFIG.buttonText}
-               </Button>
+               <div className="flex">
+                 <Button 
+                   variant="white"
+                   onClick={() => { setQuery(BANNER_CONFIG.actionQuery); fetchCards(BANNER_CONFIG.actionQuery, true); }} 
+                   className="px-6 py-2 text-sm font-bold"
+                 >
+                   {BANNER_CONFIG.buttonText}
+                 </Button>
+               </div>
             </div>
         </div>
       </div>
