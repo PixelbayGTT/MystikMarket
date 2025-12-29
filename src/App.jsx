@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
-  LogOut, Package, Settings, ClipboardList, ExternalLink 
+  LogOut, Package, Settings, ClipboardList, ExternalLink,
+  Clock, CheckCircle, Truck, XCircle
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN SIMULADA (CAMBIAR A 'TRUE' CUANDO TENGAS FIREBASE) ---
@@ -38,7 +39,8 @@ const MOCK_ORDERS = [
 
 // Usuarios simulados iniciales
 const INITIAL_USERS = [
-  { email: 'demo@user.com', password: '123', role: 'user' }
+  { email: 'demo@user.com', password: '123', role: 'user' },
+  { email: 'juan@test.com', password: '123', role: 'user' } // Usuario de prueba con ordenes
 ];
 
 // --- Componentes UI Reutilizables ---
@@ -78,7 +80,7 @@ export default function App() {
   // Estados Globales
   const [user, setUser] = useState(null); 
   const [registeredUsers, setRegisteredUsers] = useState(INITIAL_USERS); // Base de datos local de usuarios
-  const [view, setView] = useState('store'); 
+  const [view, setView] = useState('store'); // store, login, profile, admin-orders, admin-inventory...
   const [inventory, setInventory] = useState(MOCK_INVENTORY);
   const [orders, setOrders] = useState(MOCK_ORDERS);
 
@@ -207,7 +209,7 @@ export default function App() {
     setAuthForm({ email: '', password: '', isRegister: false, error: '' });
   };
 
-  // --- Gestión de Inventario (Admin) ---
+  // --- Gestión de Inventario y Ordenes (Admin) ---
 
   const updateStock = (cardId, finish, newQuantity) => {
     setInventory(prev => ({
@@ -221,6 +223,16 @@ export default function App() {
 
   const getStock = (cardId, finish) => {
     return inventory[cardId]?.[finish] || 0;
+  };
+
+  const updateOrderStatus = (orderId, newStatus) => {
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+  };
+
+  const deleteOrder = (orderId) => {
+    if (window.confirm('¿Estás seguro de que deseas eliminar esta orden permanentemente?')) {
+      setOrders(prev => prev.filter(o => o.id !== orderId));
+    }
   };
 
   // --- Carrito ---
@@ -262,7 +274,7 @@ export default function App() {
     const newOrder = {
       id: `ord-${Date.now()}`,
       date: new Date().toISOString(),
-      buyer: checkoutForm,
+      buyer: { ...checkoutForm, email: user ? user.email : checkoutForm.email }, // Asociar al usuario logueado si existe
       total: cartTotal,
       items: cart,
       status: 'pendiente'
@@ -298,7 +310,7 @@ export default function App() {
     fetchCards(cardName, true);
   };
 
-  // --- VISTAS Y MODALES (Restaurados) ---
+  // --- VISTAS Y MODALES ---
 
   const renderCardModal = () => {
     if (!selectedCard) return null;
@@ -436,14 +448,91 @@ export default function App() {
           </button>
         </div>
         
-        <div className="mt-6 bg-slate-900/50 p-4 rounded text-xs text-slate-500 text-center">
-          <p className="font-bold text-slate-400">Datos Demo:</p>
-          <p>Admin: admin@mystic.com / admin123</p>
-          <p>User: demo@user.com / 123</p>
-        </div>
+        {/* SE HA ELIMINADO EL FOOTER CON LOS DATOS DEMO */}
       </div>
     </div>
   );
+
+  const renderProfile = () => {
+    // Filtrar órdenes del usuario actual
+    const userOrders = orders.filter(o => o.buyer.email === user.email);
+
+    return (
+      <div className="max-w-4xl mx-auto p-4 sm:p-8">
+        <div className="mb-8 flex items-center gap-4">
+            <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">
+                {user.email.charAt(0).toUpperCase()}
+            </div>
+            <div>
+                <h2 className="text-3xl font-bold text-white">Mi Perfil</h2>
+                <p className="text-slate-400">{user.email}</p>
+            </div>
+        </div>
+
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-xl">
+            <div className="p-6 border-b border-slate-700 bg-slate-900/50">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Clock size={20} className="text-purple-400"/> Historial de Pedidos
+                </h3>
+            </div>
+            
+            {userOrders.length === 0 ? (
+                <div className="p-12 text-center text-slate-500">
+                    <Package size={48} className="mx-auto mb-4 opacity-20"/>
+                    <p>No has realizado ningún pedido todavía.</p>
+                    <Button variant="outline" onClick={() => setView('store')} className="mt-4 mx-auto">Ir a la Tienda</Button>
+                </div>
+            ) : (
+                <div className="divide-y divide-slate-700">
+                    {userOrders.map(order => (
+                        <div key={order.id} className="p-6 hover:bg-slate-750 transition-colors">
+                            <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-lg font-bold text-white">Pedido #{order.id}</span>
+                                        <Badge color={
+                                            order.status === 'pagado' ? 'bg-green-600' : 
+                                            order.status === 'cancelado' ? 'bg-red-600' : 
+                                            order.status === 'enviado' ? 'bg-blue-600' : 'bg-yellow-600'
+                                        }>{order.status}</Badge>
+                                    </div>
+                                    <p className="text-sm text-slate-400">{new Date(order.date).toLocaleDateString()} a las {new Date(order.date).toLocaleTimeString()}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm text-slate-400">Total</p>
+                                    <p className="text-xl font-bold text-green-400">${order.total.toFixed(2)}</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
+                                {order.items.map((item, i) => (
+                                    <div key={i} className="flex items-center gap-3">
+                                        <img src={item.image} alt="" className="w-8 h-10 object-cover rounded bg-black"/>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-slate-200 truncate">{item.name}</p>
+                                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                                                <span>{item.set}</span>
+                                                <span className="flex items-center gap-1">
+                                                    {item.finish === 'foil' && <Zap size={10} className="text-yellow-500"/>}
+                                                    {item.finish === 'foil' ? 'Foil' : 'Normal'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs text-slate-400">x{item.quantity}</span>
+                                            <span className="block text-sm font-bold text-slate-300">${item.price}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+      </div>
+    );
+  };
 
   const renderAdminOrders = () => (
     <div className="max-w-6xl mx-auto p-4">
@@ -459,6 +548,7 @@ export default function App() {
                 <th className="p-4 w-1/2">Items</th>
                 <th className="p-4">Total</th>
                 <th className="p-4">Estado</th>
+                <th className="p-4">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-700">
@@ -505,7 +595,28 @@ export default function App() {
                     </div>
                   </td>
                   <td className="p-4 text-green-400 font-bold align-top">${order.total.toFixed(2)}</td>
-                  <td className="p-4 align-top"><Badge color="bg-blue-600">{order.status}</Badge></td>
+                  <td className="p-4 align-top">
+                    <select 
+                      value={order.status}
+                      onChange={(e) => updateOrderStatus(order.id, e.target.value)}
+                      className="bg-slate-900 border border-slate-700 text-xs rounded p-1 text-white focus:border-purple-500 outline-none"
+                    >
+                      <option value="pendiente">Pendiente</option>
+                      <option value="pagado">Pagado</option>
+                      <option value="enviado">Enviado</option>
+                      <option value="entregado">Entregado</option>
+                      <option value="cancelado">Cancelado</option>
+                    </select>
+                  </td>
+                  <td className="p-4 align-top">
+                    <button 
+                      onClick={() => deleteOrder(order.id)}
+                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors"
+                      title="Eliminar Orden"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -730,7 +841,9 @@ export default function App() {
                 </div>
               )}
               <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
-                <span className="text-sm text-slate-300 hidden sm:block">{user.email.split('@')[0]}</span>
+                <button onClick={() => setView('profile')} className="text-sm text-slate-300 hidden sm:block hover:text-white transition-colors">
+                    {user.email.split('@')[0]}
+                </button>
                 <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-full" title="Cerrar Sesión"><LogOut size={20}/></button>
               </div>
             </div>
@@ -757,6 +870,7 @@ export default function App() {
         {view === 'login' && renderLogin()}
         {view === 'admin-inventory' && renderAdminInventory()}
         {view === 'admin-orders' && renderAdminOrders()}
+        {view === 'profile' && renderProfile()}
         
         {view === 'store' && (
           <>
