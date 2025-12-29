@@ -741,16 +741,28 @@ export default function App() {
         <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2"><Package className="text-blue-500"/> Gestión de Inventario</h2>
         <p className="text-slate-400 text-sm mb-4">Busca cartas en Scryfall para añadirlas a tu stock local.</p>
         <form onSubmit={(e) => { e.preventDefault(); fetchCards(query, true); }} className="flex gap-2">
-          <input 
-            type="text" placeholder="Buscar carta para stock..." 
-            className="flex-1 bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
-            value={query} onChange={handleQueryChange}
-          />
-          {showSuggestions && suggestions.length > 0 && (
-            <div className="absolute top-full left-0 mt-1 w-full max-w-md bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50">
-              {suggestions.map((s, i) => <button key={i} onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300">{s}</button>)}
-            </div>
-          )}
+          <div className="flex-1 relative" ref={wrapperRef}>
+            <input 
+              type="text" placeholder="Buscar carta para stock..." 
+              className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
+              value={query} onChange={handleQueryChange}
+              onFocus={() => query.length > 2 && setShowSuggestions(true)}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto custom-scrollbar">
+                {suggestions.map((s, i) => (
+                  <button 
+                    key={i} 
+                    type="button"
+                    onClick={() => selectSuggestion(s)} 
+                    className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300 border-b border-slate-800 last:border-0"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <Button type="submit">Buscar</Button>
         </form>
       </div>
@@ -795,102 +807,6 @@ export default function App() {
       )}
     </div>
   );
-
-  const renderLogin = () => (
-    <div className="flex items-center justify-center min-h-[80vh]">
-      <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 w-full max-w-md shadow-2xl">
-        <h2 className="text-2xl font-bold text-white mb-6 text-center">{authForm.isRegister ? "Crear Cuenta" : "Iniciar Sesión"}</h2>
-        {authForm.error && <div className="bg-red-500/20 text-red-200 p-3 rounded mb-4 text-sm">{authForm.error}</div>}
-        <form onSubmit={handleAuth} className="space-y-4">
-          <input type="email" placeholder="Email" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} required />
-          <input type="password" placeholder="Contraseña" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
-          <Button type="submit" className="w-full">{authForm.isRegister ? "Registrarse" : "Entrar"}</Button>
-        </form>
-        <p className="text-center mt-4 text-sm cursor-pointer text-purple-400" onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})}>
-          {authForm.isRegister ? "¿Ya tienes cuenta? Inicia sesión" : "¿No tienes cuenta? Regístrate"}
-        </p>
-      </div>
-    </div>
-  );
-
-  const renderProfile = () => {
-    return (
-      <div className="max-w-4xl mx-auto p-4 sm:p-8">
-        <div className="mb-8 flex items-center gap-4">
-            <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">
-                {user?.email?.charAt(0).toUpperCase()}
-            </div>
-            <div>
-                <h2 className="text-3xl font-bold text-white">Mi Perfil</h2>
-                <p className="text-slate-400">{user?.email}</p>
-                {user?.role === 'admin' && <Badge color="bg-yellow-600">Administrador</Badge>}
-            </div>
-        </div>
-
-        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-xl">
-            <div className="p-6 border-b border-slate-700 bg-slate-900/50">
-                <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Clock size={20} className="text-purple-400"/> Historial de Pedidos
-                </h3>
-            </div>
-            
-            {orders.length === 0 ? (
-                <div className="p-12 text-center text-slate-500">
-                    <Package size={48} className="mx-auto mb-4 opacity-20"/>
-                    <p>No has realizado ningún pedido todavía.</p>
-                    <Button variant="outline" onClick={() => setView('store')} className="mt-4 mx-auto">Ir a la Tienda</Button>
-                </div>
-            ) : (
-                <div className="divide-y divide-slate-700">
-                    {orders.map(order => (
-                        <div key={order.id} className="p-6 hover:bg-slate-750 transition-colors">
-                            <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-lg font-bold text-white">Pedido #{order.id}</span>
-                                        <Badge color={
-                                            order.status === 'pagado' ? 'bg-green-600' : 
-                                            order.status === 'cancelado' ? 'bg-red-600' : 
-                                            order.status === 'enviado' ? 'bg-blue-600' : 'bg-yellow-600'
-                                        }>{order.status}</Badge>
-                                    </div>
-                                    <p className="text-sm text-slate-400">{new Date(order.date).toLocaleString()}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-sm text-slate-400">Total</p>
-                                    <p className="text-xl font-bold text-green-400">Q{order.total.toFixed(2)}</p>
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-900/50 rounded-lg p-3 space-y-2 border border-slate-700/50">
-                                {order.items.map((item, i) => (
-                                    <div key={i} className="flex items-center gap-3">
-                                        <img src={item.image} alt="" className="w-8 h-10 object-cover rounded bg-black"/>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-medium text-slate-200 truncate">{item.name}</p>
-                                            <div className="flex items-center gap-2 text-xs text-slate-500">
-                                                <span>{item.set}</span>
-                                                <span className="flex items-center gap-1">
-                                                    {item.finish === 'foil' && <Zap size={10} className="text-yellow-500"/>}
-                                                    {item.finish === 'foil' ? 'Foil' : 'Normal'}
-                                                </span>
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className="text-xs text-slate-400">x{item.quantity}</span>
-                                            <span className="block text-sm font-bold text-slate-300">Q{item.price.toFixed(2)}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 font-sans pb-20">
