@@ -203,12 +203,14 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, []);
 
-  // 3. Órdenes
+  // 3. Órdenes (CORREGIDO: Sin orderBy en Query, ordenado en cliente)
   useEffect(() => {
     if (!db || !user) return;
     let unsubscribe;
     try {
-      const q = query(collection(db, "orders"), orderBy("date", "desc"));
+      // NOTA: Quitamos orderBy de aquí para evitar errores de índices faltantes
+      const q = collection(db, "orders");
+      
       unsubscribe = onSnapshot(q, (snapshot) => {
         const allOrders = snapshot.docs.map(doc => ({
           id: doc.id,
@@ -216,12 +218,19 @@ export default function App() {
           date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
         }));
         
+        // Ordenamos en JS
+        allOrders.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
         if (user.role === 'admin') {
           setOrders(allOrders);
         } else {
-          setOrders(allOrders.filter(o => o.buyer?.uid === user.uid || o.buyer?.email === user.email));
+          // Filtro por UID o Email
+          setOrders(allOrders.filter(o => 
+            o.buyer?.uid === user.uid || o.buyer?.email === user.email
+          ));
         }
       }, (error) => {
+        console.error("Error snapshot órdenes:", error);
         if (error.code === 'permission-denied') setPermissionError(true);
       });
     } catch (e) { console.error("Error creando listener de ordenes:", e); }
