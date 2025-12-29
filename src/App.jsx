@@ -34,12 +34,13 @@ const BANNER_CONFIG = {
 
 // ¡IMPORTANTE! Reemplaza estos valores con los de tu consola de Firebase
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.appspot.com",
-  messagingSenderId: "TU_MESSAGING_ID",
-  appId: "TU_APP_ID"
+const firebaseConfig = {
+  apiKey: "AIzaSyB3-ZfZpmJTbUvR9UeOFmn2F7oDnKz0WXQ",
+  authDomain: "mystikmarket-1a296.firebaseapp.com",
+  projectId: "mystikmarket-1a296",
+  storageBucket: "mystikmarket-1a296.firebasestorage.app",
+  messagingSenderId: "999199755166",
+  appId: "1:999199755166:web:91351940643d6e72cd648f"
 };
 
 // Inicialización segura de Firebase
