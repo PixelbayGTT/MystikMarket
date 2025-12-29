@@ -153,7 +153,7 @@ export default function App() {
     if (window.location.hash) window.history.replaceState(null, '', ' ');
     setView('store');
     setQuery('');
-    fetchCards('format:commander year>=2023', false);
+    // Al limpiar la query, el useEffect de 'inventory' se encargará de cargar el stock
   };
 
   // --- SINCRONIZACIÓN FIREBASE ---
@@ -238,14 +238,57 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [user]);
 
+  // 4. LÓGICA DE VISUALIZACIÓN: HOME VS BÚSQUEDA
   useEffect(() => {
-    fetchCards('format:commander year>=2023', false);
+    // Listener para cerrar autocompletado al clickear fuera
     const handleClickOutside = (event) => {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setShowSuggestions(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
+
+    // --- LÓGICA PRINCIPAL DE QUE MOSTRAR ---
+    
+    // CASO 1: Si hay texto en el buscador, NO tocamos nada (el usuario o el submit se encargan)
+    if (query.trim() !== '') return;
+
+    // CASO 2: Si el buscador está vacío (Home), mostramos el inventario
+    const inStockIds = Object.keys(inventory).filter(id => {
+      const item = inventory[id];
+      return (item.normal > 0 || item.foil > 0);
+    });
+
+    if (inStockIds.length > 0) {
+      setLoading(true);
+      // Scryfall Collection API (Max 75 items)
+      const batchIds = inStockIds.slice(0, 75).map(id => ({ id }));
+      
+      fetch('https://api.scryfall.com/cards/collection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifiers: batchIds })
+      })
+      .then(res => res.json())
+      .then(data => {
+        setCards(data.data || []);
+        setLoading(false);
+      })
+      .catch(e => {
+        console.error("Error cargando inventario:", e);
+        setLoading(false);
+      });
+    } else {
+      // CASO 3: Inventario vacío (o no cargado aun). Mostramos tendencias como fallback
+      // Solo si realmente no hay keys en el objeto inventory (inicio frio)
+      if (Object.keys(inventory).length === 0) {
+         fetchCards('format:commander year>=2023', false);
+      } else {
+         // Si inventory tiene keys pero ninguno tiene stock > 0, mostramos vacío
+         setCards([]);
+      }
+    }
+
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [inventory, query]); // Se ejecuta cuando cambia el inventario o se limpia la búsqueda
 
   // --- FUNCIONES ---
 
@@ -267,13 +310,11 @@ export default function App() {
     } catch (e) { console.error(e); alert("Error al actualizar estado"); }
   };
 
-  // Función para eliminar orden Y restaurar stock
   const deleteOrder = async (orderId) => {
     if (!db) return;
     if (window.confirm('¿Eliminar orden permanentemente? El stock será restaurado.')) {
       try {
         const orderRef = doc(db, "orders", orderId);
-        // 1. Obtener la orden para saber qué items restaurar
         const orderSnap = await getDoc(orderRef);
         
         if (!orderSnap.exists()) {
@@ -284,20 +325,15 @@ export default function App() {
         const orderData = orderSnap.data();
         const batch = writeBatch(db);
 
-        // 2. Restaurar Stock
         orderData.items.forEach(item => {
             const itemRef = doc(db, "inventory", item.id);
-            // Usamos increment para sumar de forma atómica
             batch.update(itemRef, {
                 [item.finish]: increment(item.quantity)
             });
         });
 
-        // 3. Eliminar la orden
         batch.delete(orderRef);
-
         await batch.commit();
-        // Si estaba abierto el modal de esa orden, cerrarlo
         if (selectedOrder?.id === orderId) setSelectedOrder(null);
 
       } catch (e) { 
@@ -351,9 +387,8 @@ export default function App() {
         batch.update(ref, { [item.finish]: stock - item.quantity });
       }
 
-      // GENERAR ID PERSONALIZADO: MM- + 10 Dígitos
       const orderId = `MM-${Math.floor(Math.random() * 10000000000).toString().padStart(10, '0')}`;
-      const orderRef = doc(db, "orders", orderId); // Usar ID personalizado en la referencia
+      const orderRef = doc(db, "orders", orderId);
 
       const newOrder = {
         date: serverTimestamp(),
@@ -372,7 +407,6 @@ export default function App() {
       
       setLastOrderId(orderId);
       setLastOrderTotal(currentTotal);
-      
       setCart([]);
       setView('success');
     } catch (e) {
@@ -1015,9 +1049,6 @@ export default function App() {
            </div>
         </div>
       )}
-
-      {/* Modal de Detalle de Orden (Admin) */}
-      {renderOrderModal()}
 
     </div>
   );
