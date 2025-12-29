@@ -174,7 +174,7 @@ const ProductCard = ({ card, cart, user, inventory, addToCart, openCardModal }) 
                  <div className="flex items-center gap-1">
                     {availableF > 0 && <QuantitySelector qty={qtyFoil} setQty={setQtyFoil} max={availableF} disabled={availableF <= 0} />}
                     <button 
-                      onClick={(e) => { e.stopPropagation(); addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
+                      onClick={() => { e.stopPropagation(); addToCart(card, 'foil', pFoilUSD, qtyFoil); setQtyFoil(1); }} 
                       disabled={availableF <= 0} 
                       className={`w-8 h-8 flex items-center justify-center rounded text-white transition-colors ${availableF <= 0 ? 'bg-slate-700 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
                     >
@@ -400,6 +400,8 @@ export default function App() {
   }, []);
 
   // --- FUNCIONES LÓGICAS ---
+  const getStock = (id, finish) => getStockValue(inventory, id, finish);
+
   const updateStock = async (id, finish, val) => {
     if (!user || user.role !== 'admin' || !db) return;
     const qty = parseInt(val); if (isNaN(qty)) return;
