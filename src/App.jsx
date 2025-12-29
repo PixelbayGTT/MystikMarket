@@ -3,7 +3,7 @@ import {
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
-  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle, Eye
+  Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle, Eye, Star
 } from 'lucide-react';
 
 // --- IMPORTACIONES DE FIREBASE ---
@@ -20,14 +20,26 @@ import {
 // --- CONFIGURACIÓN ---
 const EXCHANGE_RATE = 7.5; // Tasa de cambio: $1 USD = Q7.5
 
+// --- CONFIGURACIÓN DEL BANNER (MODIFICAR AQUÍ) ---
+const BANNER_CONFIG = {
+  show: true, // true para mostrar, false para ocultar
+  title: "¡Nuevas Llegadas: Ixalan!",
+  subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
+  buttonText: "Ver Colección",
+  // URL de la imagen de fondo (puedes usar arte de cartas de Scryfall o tus propias imagenes)
+  image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
+  // La búsqueda que se ejecutará al dar click en el botón
+  actionQuery: "set:lci" 
+};
+
 // ¡IMPORTANTE! Reemplaza estos valores con los de tu consola de Firebase
 const firebaseConfig = {
-  apiKey: "AIzaSyB3-ZfZpmJTbUvR9UeOFmn2F7oDnKz0WXQ",
-  authDomain: "mystikmarket-1a296.firebaseapp.com",
-  projectId: "mystikmarket-1a296",
-  storageBucket: "mystikmarket-1a296.firebasestorage.app",
-  messagingSenderId: "999199755166",
-  appId: "1:999199755166:web:91351940643d6e72cd648f"
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.appspot.com",
+  messagingSenderId: "TU_MESSAGING_ID",
+  appId: "TU_APP_ID"
 };
 
 // Inicialización segura de Firebase
@@ -153,7 +165,7 @@ export default function App() {
     if (window.location.hash) window.history.replaceState(null, '', ' ');
     setView('store');
     setQuery('');
-    // Al limpiar la query, el useEffect de 'inventory' se encargará de cargar el stock
+    fetchCards('format:commander year>=2023', false);
   };
 
   // --- SINCRONIZACIÓN FIREBASE ---
@@ -238,57 +250,14 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [user]);
 
-  // 4. LÓGICA DE VISUALIZACIÓN: HOME VS BÚSQUEDA
   useEffect(() => {
-    // Listener para cerrar autocompletado al clickear fuera
+    fetchCards('format:commander year>=2023', false);
     const handleClickOutside = (event) => {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setShowSuggestions(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
-
-    // --- LÓGICA PRINCIPAL DE QUE MOSTRAR ---
-    
-    // CASO 1: Si hay texto en el buscador, NO tocamos nada (el usuario o el submit se encargan)
-    if (query.trim() !== '') return;
-
-    // CASO 2: Si el buscador está vacío (Home), mostramos el inventario
-    const inStockIds = Object.keys(inventory).filter(id => {
-      const item = inventory[id];
-      return (item.normal > 0 || item.foil > 0);
-    });
-
-    if (inStockIds.length > 0) {
-      setLoading(true);
-      // Scryfall Collection API (Max 75 items)
-      const batchIds = inStockIds.slice(0, 75).map(id => ({ id }));
-      
-      fetch('https://api.scryfall.com/cards/collection', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifiers: batchIds })
-      })
-      .then(res => res.json())
-      .then(data => {
-        setCards(data.data || []);
-        setLoading(false);
-      })
-      .catch(e => {
-        console.error("Error cargando inventario:", e);
-        setLoading(false);
-      });
-    } else {
-      // CASO 3: Inventario vacío (o no cargado aun). Mostramos tendencias como fallback
-      // Solo si realmente no hay keys en el objeto inventory (inicio frio)
-      if (Object.keys(inventory).length === 0) {
-         fetchCards('format:commander year>=2023', false);
-      } else {
-         // Si inventory tiene keys pero ninguno tiene stock > 0, mostramos vacío
-         setCards([]);
-      }
-    }
-
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [inventory, query]); // Se ejecuta cuando cambia el inventario o se limpia la búsqueda
+  }, []);
 
   // --- FUNCIONES ---
 
@@ -310,6 +279,7 @@ export default function App() {
     } catch (e) { console.error(e); alert("Error al actualizar estado"); }
   };
 
+  // Función para eliminar orden Y restaurar stock
   const deleteOrder = async (orderId) => {
     if (!db) return;
     if (window.confirm('¿Eliminar orden permanentemente? El stock será restaurado.')) {
@@ -407,6 +377,7 @@ export default function App() {
       
       setLastOrderId(orderId);
       setLastOrderTotal(currentTotal);
+      
       setCart([]);
       setView('success');
     } catch (e) {
@@ -491,6 +462,37 @@ export default function App() {
   const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
   // --- VISTAS ---
+
+  const renderBanner = () => {
+    if (!BANNER_CONFIG.show) return null;
+    return (
+      <div className="relative w-full h-64 md:h-80 rounded-2xl overflow-hidden mb-8 group shadow-2xl border border-purple-500/20">
+        <div 
+            className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
+            style={{ backgroundImage: `url(${BANNER_CONFIG.image})` }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-8 md:p-12">
+            <div className="max-w-2xl animate-in slide-in-from-left duration-700">
+               <div className="flex items-center gap-2 mb-2">
+                 <span className="bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1"><Star size={12} fill="black"/> Destacado</span>
+               </div>
+               <h1 className="text-4xl md:text-6xl font-extrabold text-white mb-4 leading-tight drop-shadow-lg">
+                 {BANNER_CONFIG.title}
+               </h1>
+               <p className="text-lg md:text-xl text-slate-300 mb-8 max-w-lg drop-shadow-md">
+                 {BANNER_CONFIG.subtitle}
+               </p>
+               <Button 
+                 onClick={() => { setQuery(BANNER_CONFIG.actionQuery); fetchCards(BANNER_CONFIG.actionQuery, true); }} 
+                 className="text-lg px-8 py-4 bg-white text-purple-900 hover:bg-slate-200 shadow-xl"
+               >
+                 {BANNER_CONFIG.buttonText}
+               </Button>
+            </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderProductCard = (card) => {
     const pNormalUSD = card.prices?.usd;
@@ -778,7 +780,7 @@ export default function App() {
           <div className="flex-1 relative" ref={wrapperRef}>
             <input 
               type="text" placeholder="Buscar carta para stock..." 
-              className="w-full bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
+              className="w-full bg-slate-950 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
               value={query} onChange={handleQueryChange}
               onFocus={() => query.length > 2 && setShowSuggestions(true)}
             />
@@ -908,6 +910,8 @@ export default function App() {
 
         {view === 'store' && (
           <>
+            {!query && !loading && renderBanner()}
+
             {loading && <div className="text-center py-12">Cargando cartas...</div>}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {cards.map(renderProductCard)}
@@ -1049,6 +1053,9 @@ export default function App() {
            </div>
         </div>
       )}
+
+      {/* Modal de Detalle de Orden (Admin) */}
+      {renderOrderModal()}
 
     </div>
   );
