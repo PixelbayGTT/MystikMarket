@@ -90,6 +90,7 @@ export default function App() {
   const [view, setView] = useState('store');
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
+  const [permissionError, setPermissionError] = useState(false); // Estado para detectar bloqueo de Firebase
   
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]); 
@@ -119,6 +120,7 @@ export default function App() {
           }
         } catch (e) {
           console.warn("No se pudo leer el rol, asignando default 'user'", e);
+          if (e.code === 'permission-denied') setPermissionError(true);
         }
         setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role });
         setCheckoutForm(prev => ({ ...prev, email: firebaseUser.email }));
@@ -136,6 +138,10 @@ export default function App() {
       const inv = {};
       snapshot.forEach(doc => inv[doc.id] = doc.data());
       setInventory(inv);
+      setPermissionError(false); // Si tiene éxito, limpiamos el error
+    }, (error) => {
+      console.error("Error inventario:", error);
+      if (error.code === 'permission-denied') setPermissionError(true);
     });
     return () => unsubscribe();
   }, []);
@@ -156,6 +162,8 @@ export default function App() {
       } else {
         setOrders(allOrders.filter(o => o.buyer.uid === user.uid || o.buyer.email === user.email));
       }
+    }, (error) => {
+      if (error.code === 'permission-denied') setPermissionError(true);
     });
     return () => unsubscribe();
   }, [user]);
@@ -536,6 +544,41 @@ export default function App() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
+        
+        {/* BANNER DE ERROR DE PERMISOS */}
+        {permissionError && (
+          <div className="bg-red-500/10 border border-red-500 text-white p-6 rounded-xl mb-8 shadow-2xl">
+            <div className="flex items-center gap-3 mb-2">
+              <AlertTriangle className="text-red-500" size={24}/>
+              <h3 className="text-xl font-bold text-red-400">¡Acceso Bloqueado por Firebase!</h3>
+            </div>
+            <p className="text-slate-300 mb-4">
+              Tu base de datos está en <strong>Modo Producción</strong> y está rechazando las conexiones. 
+              Necesitas abrir los permisos para poder usar la App.
+            </p>
+            <div className="bg-slate-950 p-4 rounded-lg font-mono text-xs overflow-x-auto border border-slate-800">
+              <p className="text-slate-500 mb-2">// Copia este código y pégalo en Firebase Console {'>'} Firestore {'>'} Reglas:</p>
+              <div className="text-green-400">
+                <p>rules_version = '2';</p>
+                <p>service cloud.firestore &#123;</p>
+                <p>&nbsp;&nbsp;match /databases/&#123;database&#125;/documents &#123;</p>
+                <p>&nbsp;&nbsp;&nbsp;&nbsp;match /&#123;document=**&#125; &#123;</p>
+                <p>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;allow read, write: if true;</p>
+                <p>&nbsp;&nbsp;&nbsp;&nbsp;&#125;</p>
+                <p>&nbsp;&nbsp;&#125;</p>
+                <p>&#125;</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!db && (
+          <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded-xl mb-6 text-center flex items-center justify-center gap-2">
+            <AlertTriangle size={24} />
+            <span>Atención: Configura tus credenciales de Firebase en el código para que la App funcione.</span>
+          </div>
+        )}
+
         {view === 'store' && (
           <>
             {loading && <div className="text-center py-12">Cargando cartas...</div>}
