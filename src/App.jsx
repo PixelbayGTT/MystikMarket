@@ -1,5 +1,3 @@
-import { db } from './firebase'; 
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
@@ -21,12 +19,12 @@ import {
 
 // --- CONFIGURACIÓN DE FIREBASE (REEMPLAZAR CON TUS DATOS REALES) ---
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROYECTO.firebaseapp.com",
-  projectId: "TU_PROYECTO",
-  storageBucket: "TU_PROYECTO.appspot.com",
-  messagingSenderId: "TU_MESSAGING_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyB3-ZfZpmJTbUvR9UeOFmn2F7oDnKz0WXQ",
+  authDomain: "mystikmarket-1a296.firebaseapp.com",
+  projectId: "mystikmarket-1a296",
+  storageBucket: "mystikmarket-1a296.firebasestorage.app",
+  messagingSenderId: "999199755166",
+  appId: "1:999199755166:web:91351940643d6e72cd648f"
 };
 
 // Inicializar Firebase (Solo si hay config, para evitar errores en la vista previa sin claves)
