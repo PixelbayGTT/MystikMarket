@@ -26,7 +26,7 @@ const BANNER_CONFIG = {
   title: "¡Nuevas Llegadas: Ixalan!",
   subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
   buttonText: "Ver Colección",
-  // URL de la imagen de fondo (puedes usar arte de cartas de Scryfall o tus propias imagenes)
+  // URL de la imagen de fondo
   image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
   // La búsqueda que se ejecutará al dar click en el botón
   actionQuery: "set:lci" 
@@ -72,7 +72,8 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
     outline: "bg-transparent border-2 border-purple-500 text-purple-400 hover:bg-purple-500/10",
     success: "bg-green-600 hover:bg-green-500 text-white",
     whatsapp: "bg-green-500 hover:bg-green-400 text-white shadow-lg shadow-green-900/20",
-    ghost: "bg-transparent hover:bg-slate-800 text-slate-300"
+    ghost: "bg-transparent hover:bg-slate-800 text-slate-300",
+    white: "bg-white text-purple-900 hover:bg-slate-100 shadow-xl" // Nueva variante para el banner
   };
   return <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>{children}</button>;
 };
@@ -468,8 +469,8 @@ export default function App() {
     return (
       <div className="relative w-full h-64 md:h-80 rounded-2xl overflow-hidden mb-8 group shadow-2xl border border-purple-500/20">
         <div 
-            className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
-            style={{ backgroundImage: `url(${BANNER_CONFIG.image})` }}
+            className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105 bg-slate-800"
+            style={{ backgroundImage: `url('${BANNER_CONFIG.image}')` }}
         />
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-8 md:p-12">
             <div className="max-w-2xl animate-in slide-in-from-left duration-700">
@@ -483,8 +484,9 @@ export default function App() {
                  {BANNER_CONFIG.subtitle}
                </p>
                <Button 
+                 variant="white"
                  onClick={() => { setQuery(BANNER_CONFIG.actionQuery); fetchCards(BANNER_CONFIG.actionQuery, true); }} 
-                 className="text-lg px-8 py-4 bg-white text-purple-900 hover:bg-slate-200 shadow-xl"
+                 className="text-lg px-8 py-4"
                >
                  {BANNER_CONFIG.buttonText}
                </Button>
