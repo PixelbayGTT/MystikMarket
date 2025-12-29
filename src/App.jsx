@@ -13,7 +13,6 @@ const USE_FIREBASE = false;
 // --- MOCK DATABASE (Para la demo sin backend) ---
 const MOCK_INVENTORY = {
   // ID de Scryfall : { normal: cantidad, foil: cantidad }
-  // Ejemplo: Sol Ring (Commander Legends)
   "203f5900-3449-46ba-b83c-648c6f937666": { normal: 4, foil: 1 },
 };
 
@@ -26,6 +25,11 @@ const MOCK_ORDERS = [
     status: "pagado",
     items: [{ name: "Sol Ring", quantity: 1, finish: "normal" }] 
   }
+];
+
+// Usuarios simulados iniciales
+const INITIAL_USERS = [
+  { email: 'demo@user.com', password: '123', role: 'user' }
 ];
 
 // --- Componentes UI Reutilizables ---
@@ -63,8 +67,9 @@ const Badge = ({ children, color = 'bg-blue-600' }) => (
 
 export default function App() {
   // Estados Globales
-  const [user, setUser] = useState(null); // { email, role: 'admin' | 'user' }
-  const [view, setView] = useState('store'); // store, checkout, success, admin-inventory, admin-orders, login
+  const [user, setUser] = useState(null); 
+  const [registeredUsers, setRegisteredUsers] = useState(INITIAL_USERS); // Base de datos local de usuarios
+  const [view, setView] = useState('store'); 
   const [inventory, setInventory] = useState(MOCK_INVENTORY);
   const [orders, setOrders] = useState(MOCK_ORDERS);
 
@@ -77,37 +82,27 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
-  const [showFilters, setShowFilters] = useState(false);
-  const [setsList, setSetsList] = useState([]);
-  const [filters, setFilters] = useState({ colors: [], rarity: '', type: '', set: '' });
   
   // Estados de Checkout y Auth
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
-  const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false });
+  const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
 
   const wrapperRef = useRef(null);
 
   // --- Inicialización ---
   useEffect(() => {
     fetchCards('format:commander year>=2021', false);
-    fetchSets();
     
-    // Si estuviéramos usando Firebase real, aquí escucharíamos onAuthStateChanged
-    // y onSnapshot para el inventario.
+    function handleClickOutside(event) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // --- API & Lógica de Negocio ---
-
-  const fetchSets = async () => {
-    try {
-      const response = await fetch('https://api.scryfall.com/sets');
-      const data = await response.json();
-      if (data.data) {
-        const mainSets = data.data.filter(s => ['core', 'expansion', 'masters'].includes(s.set_type));
-        setSetsList(mainSets);
-      }
-    } catch (e) { console.error(e); }
-  };
 
   const fetchCards = async (searchQuery, isUserSearch = true) => {
     if (!searchQuery.trim()) return;
@@ -133,21 +128,74 @@ export default function App() {
     }
   };
 
+  // Autocompletado (Restaurado)
+  const handleQueryChange = async (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    
+    if (val.length > 2) {
+      try {
+        const response = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(val)}`);
+        const data = await response.json();
+        if (data.data) {
+          setSuggestions(data.data);
+          setShowSuggestions(true);
+        }
+      } catch (error) {
+        console.error("Autocomplete error:", error);
+      }
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectSuggestion = (name) => {
+    setQuery(name);
+    setShowSuggestions(false);
+    setTimeout(() => fetchCards(name, true), 50);
+  };
+
+  // Auth Logic (Mejorada)
   const handleAuth = (e) => {
     e.preventDefault();
-    // SIMULACIÓN DE AUTH
+    setAuthForm({ ...authForm, error: '' });
+
+    // 1. Admin Login (Hardcoded)
     if (authForm.email === 'admin@mystic.com' && authForm.password === 'admin123') {
       setUser({ email: authForm.email, role: 'admin' });
-    } else {
-      setUser({ email: authForm.email, role: 'user' });
+      setView('store');
+      return;
     }
-    setView('store');
+
+    // 2. Registro de Usuario
+    if (authForm.isRegister) {
+      const exists = registeredUsers.find(u => u.email === authForm.email);
+      if (exists) {
+        setAuthForm({ ...authForm, error: 'El usuario ya existe.' });
+        return;
+      }
+      const newUser = { email: authForm.email, password: authForm.password, role: 'user' };
+      setRegisteredUsers([...registeredUsers, newUser]);
+      setUser(newUser);
+      setView('store');
+    } 
+    // 3. Inicio de Sesión
+    else {
+      const foundUser = registeredUsers.find(u => u.email === authForm.email && u.password === authForm.password);
+      if (foundUser) {
+        setUser(foundUser);
+        setView('store');
+      } else {
+        setAuthForm({ ...authForm, error: 'Credenciales inválidas o usuario no registrado.' });
+      }
+    }
   };
 
   const handleLogout = () => {
     setUser(null);
     setView('store');
     setCart([]);
+    setAuthForm({ email: '', password: '', isRegister: false, error: '' });
   };
 
   // --- Gestión de Inventario (Admin) ---
@@ -160,8 +208,6 @@ export default function App() {
         [finish]: parseInt(newQuantity) || 0
       }
     }));
-    // AQUÍ IRÍA EL CÓDIGO DE FIREBASE:
-    // await setDoc(doc(db, "inventory", cardId), { [finish]: newQuantity }, { merge: true });
   };
 
   const getStock = (cardId, finish) => {
@@ -192,14 +238,13 @@ export default function App() {
       }];
     });
     setIsCartOpen(true);
+    // setSelectedCard(null); // Opcional: cerrar modal al comprar
   };
 
   const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
   const handleCheckoutSubmit = (e) => {
     e.preventDefault();
-    
-    // 1. Crear Orden
     const newOrder = {
       id: `ord-${Date.now()}`,
       date: new Date().toISOString(),
@@ -209,7 +254,6 @@ export default function App() {
       status: 'pendiente'
     };
 
-    // 2. Actualizar Stock (Simulado)
     const newInventory = { ...inventory };
     cart.forEach(item => {
       if (newInventory[item.id]) {
@@ -219,7 +263,6 @@ export default function App() {
     setInventory(newInventory);
     setOrders([newOrder, ...orders]);
 
-    // 3. Reset
     setTimeout(() => {
       setView('success');
       setCart([]);
@@ -234,7 +277,109 @@ export default function App() {
     return 'https://via.placeholder.com/250x350?text=No+Image';
   };
 
-  // --- VISTAS ---
+  const showAllVersions = (cardName) => {
+    setQuery(cardName);
+    setSelectedCard(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    fetchCards(cardName, true);
+  };
+
+  // --- VISTAS Y MODALES (Restaurados) ---
+
+  const renderCardModal = () => {
+    if (!selectedCard) return null;
+
+    const priceNormal = selectedCard.prices?.usd;
+    const priceFoil = selectedCard.prices?.usd_foil;
+    const stockNormal = getStock(selectedCard.id, 'normal');
+    const stockFoil = getStock(selectedCard.id, 'foil');
+    
+    const renderOracleText = (text) => {
+        if (!text) return "Sin texto.";
+        return text.split('\n').map((line, i) => (
+            <p key={i} className="mb-2 last:mb-0">{line}</p>
+        ));
+    };
+
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedCard(null)}></div>
+        <div className="relative bg-slate-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col md:flex-row shadow-2xl border border-purple-500/30 animate-in zoom-in-95 duration-200">
+          <button onClick={() => setSelectedCard(null)} className="absolute top-4 right-4 z-10 bg-slate-800/80 p-2 rounded-full text-slate-300 hover:text-white hover:bg-slate-700 transition-colors">
+            <X size={24} />
+          </button>
+
+          <div className="p-6 md:w-1/2 flex items-center justify-center bg-black/40">
+            <img src={getCardImage(selectedCard, 'large')} alt={selectedCard.name} className="rounded-xl shadow-2xl max-h-[60vh] object-contain"/>
+          </div>
+
+          <div className="p-6 md:w-1/2 flex flex-col">
+            <div className="mb-6">
+              <h2 className="text-3xl font-bold text-white mb-2">{selectedCard.name}</h2>
+              <div className="flex items-center gap-2 mb-4">
+                 <Badge color="bg-purple-600">{selectedCard.set_name}</Badge>
+                 <span className="text-slate-400 text-sm capitalize">{selectedCard.rarity}</span>
+              </div>
+              
+              <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 text-slate-300 font-serif leading-relaxed text-sm md:text-base">
+                 {selectedCard.card_faces ? (
+                    selectedCard.card_faces.map((face, idx) => (
+                        <div key={idx} className="mb-4 last:mb-0 border-b border-slate-700 last:border-0 pb-4 last:pb-0">
+                            <strong className="block text-purple-300 mb-1">{face.name}</strong>
+                            {renderOracleText(face.oracle_text)}
+                        </div>
+                    ))
+                 ) : (renderOracleText(selectedCard.oracle_text))}
+              </div>
+            </div>
+
+            <div className="mt-auto space-y-4">
+               <Button variant="outline" onClick={() => showAllVersions(selectedCard.name)} className="w-full border-slate-600 text-slate-300 hover:text-white hover:bg-slate-800">
+                  <Layers size={18} /> Ver todas las versiones / artes
+               </Button>
+
+               <h3 className="text-slate-400 font-bold uppercase text-sm tracking-wider pt-2 border-t border-slate-700/50">Opciones de Compra</h3>
+               
+               {/* Normal Price Row */}
+               <div className="flex items-center justify-between bg-slate-800 p-4 rounded-lg border border-slate-700">
+                  <div className="flex flex-col">
+                      <span className="text-white font-bold">Versión Normal</span>
+                      <span className={`text-xs ${stockNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockNormal}</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                      {priceNormal ? (
+                        <>
+                           <span className="text-2xl font-bold text-green-400">${priceNormal}</span>
+                           <Button onClick={() => addToCart(selectedCard, 'normal', priceNormal)} disabled={stockNormal <= 0} variant="primary" className="py-1.5">Agregar</Button>
+                        </>
+                      ) : <span className="text-slate-500 italic">No disponible</span>}
+                  </div>
+               </div>
+
+               {/* Foil Price Row */}
+               <div className="flex items-center justify-between bg-gradient-to-r from-slate-800 to-purple-900/20 p-4 rounded-lg border border-purple-500/20">
+                  <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                         <span className="text-white font-bold">Versión Foil</span>
+                         <Zap size={14} className="text-yellow-400" fill="currentColor" />
+                      </div>
+                      <span className={`text-xs ${stockFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockFoil}</span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                      {priceFoil ? (
+                        <>
+                           <span className="text-2xl font-bold text-green-400">${priceFoil}</span>
+                           <Button onClick={() => addToCart(selectedCard, 'foil', priceFoil)} disabled={stockFoil <= 0} className="bg-yellow-600 hover:bg-yellow-500 text-white py-1.5">Agregar</Button>
+                        </>
+                      ) : <span className="text-slate-500 italic">No disponible</span>}
+                  </div>
+               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderLogin = () => (
     <div className="flex items-center justify-center min-h-[80vh]">
@@ -246,6 +391,12 @@ export default function App() {
             {authForm.isRegister ? 'Únete a MysticMarket para comprar.' : 'Bienvenido de nuevo, Planeswalker.'}
           </p>
         </div>
+        
+        {authForm.error && (
+          <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded mb-4 text-sm text-center">
+            {authForm.error}
+          </div>
+        )}
         
         <form onSubmit={handleAuth} className="space-y-4">
           <div>
@@ -265,15 +416,15 @@ export default function App() {
         </form>
 
         <div className="mt-6 text-center">
-          <button onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister})} className="text-purple-400 hover:text-purple-300 text-sm underline">
+          <button onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})} className="text-purple-400 hover:text-purple-300 text-sm underline">
             {authForm.isRegister ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate'}
           </button>
         </div>
         
         <div className="mt-6 bg-slate-900/50 p-4 rounded text-xs text-slate-500 text-center">
-          <p className="font-bold text-slate-400">Demo Admin:</p>
-          <p>User: admin@mystic.com</p>
-          <p>Pass: admin123</p>
+          <p className="font-bold text-slate-400">Datos Demo:</p>
+          <p>Admin: admin@mystic.com / admin123</p>
+          <p>User: demo@user.com / 123</p>
         </div>
       </div>
     </div>
@@ -335,8 +486,17 @@ export default function App() {
             placeholder="Buscar carta para stock (ej. Sheoldred)..." 
             className="flex-1 bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={handleQueryChange}
           />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute top-full left-0 mt-1 w-full max-w-md bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50">
+              {suggestions.map((s, i) => (
+                <button key={i} onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300">
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
           <Button type="submit">Buscar</Button>
         </form>
       </div>
@@ -416,9 +576,16 @@ export default function App() {
           <img src={getCardImage(card)} alt={card.name} loading="lazy" className="w-full h-full object-cover transform group-hover/card:scale-110 transition-transform duration-300"/>
           {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
           
+          {/* Overlay de "Ver Detalles" (Restaurado) */}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center">
+             <span className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 backdrop-blur-sm border border-white/20">
+                <Info size={12} /> Ver Detalles
+             </span>
+          </div>
+
           {/* Badge de Stock Agotado Visual */}
           {stockNormal === 0 && stockFoil === 0 && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
               <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase transform -rotate-12 border-2 border-white">Agotado</span>
             </div>
           )}
@@ -482,15 +649,30 @@ export default function App() {
           <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 hidden sm:block">MysticMarket</span>
         </div>
 
-        {/* Search & Filters (Sólo en vista Store/Admin-Inventory) */}
+        {/* Search & Filters (Sólo en vista Store) */}
         {(view === 'store') && (
-          <div className="flex-1 max-w-xl relative group z-50">
-             <form onSubmit={(e) => { e.preventDefault(); fetchCards(query, true); }} className="flex gap-2">
-              <input 
-                type="text" placeholder="Buscar..." 
-                className="w-full bg-slate-950 border border-slate-700 text-white rounded-l-full py-2 pl-4 focus:border-purple-500 outline-none"
-                value={query} onChange={(e) => setQuery(e.target.value)}
-              />
+          <div className="flex-1 max-w-xl relative group z-50" ref={wrapperRef}>
+             <form onSubmit={(e) => { e.preventDefault(); selectSuggestion(query); }} className="flex gap-2">
+              <div className="relative flex-1">
+                <input 
+                  type="text" placeholder="Buscar..." 
+                  className="w-full bg-slate-950 border border-slate-700 text-white rounded-l-full py-2 pl-4 focus:border-purple-500 outline-none"
+                  value={query} 
+                  onChange={handleQueryChange}
+                  onFocus={() => query.length > 2 && setShowSuggestions(true)}
+                />
+                {showSuggestions && suggestions.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl overflow-hidden z-50">
+                    <ul className="max-h-64 overflow-y-auto custom-scrollbar">
+                      {suggestions.map((s, i) => (
+                        <li key={i}>
+                          <button onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-slate-300 border-b border-slate-800 last:border-0">{s}</button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
               <button className="bg-purple-600 px-4 rounded-r-full text-white"><Search size={18}/></button>
              </form>
           </div>
@@ -608,6 +790,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Modal de Detalle de Carta (Restaurado) */}
+      {renderCardModal()}
     </div>
   );
 }
