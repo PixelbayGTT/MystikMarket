@@ -166,7 +166,7 @@ export default function App() {
     if (window.location.hash) window.history.replaceState(null, '', ' ');
     setView('store');
     setQuery('');
-    fetchCards('format:commander year>=2023', false);
+    // Al limpiar la query, el useEffect de 'inventory' se encargará de cargar el stock
   };
 
   // --- SINCRONIZACIÓN FIREBASE ---
@@ -251,14 +251,55 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [user]);
 
+  // 4. LÓGICA DE VISUALIZACIÓN: HOME VS BÚSQUEDA
   useEffect(() => {
-    fetchCards('format:commander year>=2023', false);
+    // Listener para cerrar autocompletado al clickear fuera
     const handleClickOutside = (event) => {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) setShowSuggestions(false);
     };
     document.addEventListener("mousedown", handleClickOutside);
+
+    // --- LÓGICA PRINCIPAL DE QUE MOSTRAR ---
+    
+    // CASO 1: Si hay texto en el buscador, NO tocamos nada (el usuario o el submit se encargan)
+    if (query.trim() !== '') return;
+
+    // CASO 2: Si el buscador está vacío (Home), mostramos el inventario
+    const inStockIds = Object.keys(inventory).filter(id => {
+      const item = inventory[id];
+      return (item.normal > 0 || item.foil > 0);
+    });
+
+    if (inStockIds.length > 0) {
+      setLoading(true);
+      // Scryfall Collection API (Max 75 items)
+      // Si tienes mas de 75 items en stock, aquí deberías paginar o usar múltiples requests.
+      // Para este ejemplo tomamos los primeros 75.
+      const batchIds = inStockIds.slice(0, 75).map(id => ({ id }));
+      
+      fetch('https://api.scryfall.com/cards/collection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifiers: batchIds })
+      })
+      .then(res => res.json())
+      .then(data => {
+        setCards(data.data || []);
+        setLoading(false);
+      })
+      .catch(e => {
+        console.error("Error cargando inventario:", e);
+        setLoading(false);
+      });
+    } else {
+      // CASO 3: Inventario vacío. NO mostramos tendencias.
+      setCards([]);
+      // Si no es el inicio de carga (ya intentó cargar inventory), quitamos loading
+      if (Object.keys(inventory).length === 0) setLoading(false);
+    }
+
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [inventory, query]); // Se ejecuta cuando cambia el inventario o se limpia la búsqueda
 
   // --- FUNCIONES ---
 
@@ -472,7 +513,7 @@ export default function App() {
             className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105 bg-slate-800"
             style={{ backgroundImage: `url('${BANNER_CONFIG.image}')` }}
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-8 md:p-12">
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-900/80 to-transparent flex flex-col justify-center p-10 md:p-16">
             <div className="max-w-2xl animate-in slide-in-from-left duration-700">
                <div className="flex items-center gap-2 mb-2">
                  <span className="bg-yellow-500 text-black text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1"><Star size={12} fill="black"/> Destacado</span>
@@ -915,6 +956,20 @@ export default function App() {
             {!query && !loading && renderBanner()}
 
             {loading && <div className="text-center py-12">Cargando cartas...</div>}
+            
+            {!loading && cards.length === 0 && !query && (
+               <div className="text-center py-20 text-slate-500">
+                  <Package size={48} className="mx-auto mb-4 opacity-20"/>
+                  <p className="text-xl font-bold mb-2">Inventario Vacío</p>
+                  <p>Aún no hay cartas disponibles en la tienda.</p>
+                  {user?.role === 'admin' && (
+                     <Button variant="outline" className="mt-4 mx-auto" onClick={() => setView('admin-inventory')}>
+                        Ir a Gestión de Inventario
+                     </Button>
+                  )}
+               </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {cards.map(renderProductCard)}
             </div>
