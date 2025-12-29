@@ -377,37 +377,71 @@ export default function App() {
   const renderProductCard = (card) => {
     const pNormal = card.prices?.usd, pFoil = card.prices?.usd_foil;
     const sNormal = getStock(card.id, 'normal'), sFoil = getStock(card.id, 'foil');
+    const hasNormal = !!pNormal;
+    const hasFoil = !!pFoil;
     
     return (
       <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative">
         <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => setSelectedCard(card)}>
           <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
-          <div className="absolute top-2 left-2 flex flex-col gap-1">
-             {sNormal > 0 && <span className="bg-slate-900/90 text-white text-[10px] px-1.5 py-0.5 rounded border border-slate-600">N: {sNormal}</span>}
-             {sFoil > 0 && <span className="bg-yellow-900/90 text-yellow-100 text-[10px] px-1.5 py-0.5 rounded border border-yellow-600">F: {sFoil}</span>}
-          </div>
+          {/* Badge de RL */}
+          {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
+          
+          {/* Agotado Overlay */}
           {sNormal === 0 && sFoil === 0 && (
             <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
               <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase -rotate-12 border-2 border-white">Agotado</span>
             </div>
           )}
         </div>
+        
         <div className="p-3 flex-1 flex flex-col">
           <h3 className="font-bold text-white text-sm truncate">{card.name}</h3>
           <p className="text-slate-400 text-xs mb-2 truncate">{card.set_name}</p>
-          <div className="mt-auto space-y-1">
-            {pNormal && (
-              <div className="flex justify-between items-center text-xs bg-slate-900/50 p-1 rounded">
-                <span className="text-slate-300">N ${pNormal}</span>
-                <button onClick={() => addToCart(card, 'normal', pNormal)} disabled={sNormal<=0} className="bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 text-white p-1 rounded"><ShoppingCart size={12}/></button>
+          
+          <div className="mt-auto space-y-1.5">
+            {/* Fila Normal */}
+            <div className={`flex justify-between items-center px-2 py-1 rounded ${sNormal > 0 ? 'bg-slate-900/50' : 'bg-slate-900/20 opacity-60'}`}>
+              <div className="flex flex-col">
+                <span className="text-slate-300 text-xs">Normal</span>
+                <span className={`text-[9px] ${sNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sNormal}</span>
               </div>
-            )}
-            {pFoil && (
-              <div className="flex justify-between items-center text-xs bg-purple-900/20 p-1 rounded border border-purple-500/20">
-                <span className="text-purple-200">F ${pFoil}</span>
-                <button onClick={() => addToCart(card, 'foil', pFoil)} disabled={sFoil<=0} className="bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 text-white p-1 rounded"><ShoppingCart size={12}/></button>
-              </div>
-            )}
+              {hasNormal ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-400 font-bold text-xs">${pNormal}</span>
+                  <button 
+                    onClick={() => addToCart(card, 'normal', pNormal)} 
+                    disabled={sNormal<=0} 
+                    className="p-1 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 rounded text-white transition-colors"
+                  >
+                    <ShoppingCart size={12}/>
+                  </button>
+                </div>
+              ) : <span className="text-slate-600 text-[10px]">--</span>}
+            </div>
+
+            {/* Fila Foil */}
+            <div className={`flex justify-between items-center px-2 py-1 rounded border border-transparent ${sFoil > 0 ? 'bg-gradient-to-r from-slate-900/50 to-purple-900/20 border-purple-500/30' : 'bg-slate-900/20 opacity-60'}`}>
+               <div className="flex flex-col">
+                  <div className="flex items-center gap-0.5">
+                    <Zap size={10} className="text-yellow-400" fill="currentColor" />
+                    <span className="text-purple-300 text-xs font-semibold">Foil</span>
+                  </div>
+                  <span className={`text-[9px] ${sFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {sFoil}</span>
+               </div>
+              {hasFoil ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-400 font-bold text-xs">${pFoil}</span>
+                  <button 
+                    onClick={() => addToCart(card, 'foil', pFoil)} 
+                    disabled={sFoil<=0} 
+                    className="p-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 rounded text-white transition-colors"
+                  >
+                    <ShoppingCart size={12}/>
+                  </button>
+                </div>
+              ) : <span className="text-slate-600 text-[10px]">--</span>}
+            </div>
           </div>
         </div>
       </div>
@@ -552,7 +586,9 @@ export default function App() {
       {/* Navbar */}
       <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2 cursor-pointer font-bold text-xl text-white" onClick={() => setView('store')}>
-          <div className="w-8 h-8 bg-purple-600 rounded flex items-center justify-center">M</div> MysticMarket
+          {/* ICONO RESTAURADO CON GLOW */}
+          <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-xl shadow-[0_0_15px_rgba(147,51,234,0.5)]">M</div>
+          <span className="hidden sm:block">MysticMarket</span>
         </div>
         
         {view === 'store' && (
