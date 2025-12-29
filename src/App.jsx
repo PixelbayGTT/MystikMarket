@@ -4,7 +4,7 @@ import {
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
   Clock, CheckCircle, Truck, XCircle, AlertTriangle, AlertCircle, Phone, MapPin, MessageCircle, Eye, Star,
-  ArrowUpDown, Calendar
+  ArrowUpDown, Calendar, Save, Edit
 } from 'lucide-react';
 
 // --- IMPORTACIONES DE FIREBASE ---
@@ -27,7 +27,7 @@ const BANNER_CONFIG = {
   title: "¡Nuevas Llegadas: Ixalan!",
   subtitle: "Descubre los tesoros ocultos y dinosaurios legendarios de las cavernas perdidas.",
   buttonText: "Ver Colección",
-  image: "https://cards.scryfall.io/art_crop/front/d/e/de434533-3d92-4f7f-94d7-0131495c0246.jpg?1699043960", 
+  image: "https://media.wizards.com/2023/images/daily/5UK4owRxnQy.jpg", 
   actionQuery: "set:lci" 
 };
 
@@ -103,6 +103,7 @@ export default function App() {
 
   // --- ESTADOS ---
   const [user, setUser] = useState(null); 
+  const [userProfile, setUserProfile] = useState({}); // Perfil completo (nombre, telefono, etc)
   const [view, setView] = useState('store');
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
@@ -111,9 +112,11 @@ export default function App() {
   const [lastOrderId, setLastOrderId] = useState(null); 
   const [lastOrderTotal, setLastOrderTotal] = useState(0); 
   
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(''); // Lo que se busca realmente
+  const [inputValue, setInputValue] = useState(''); // Lo que el usuario escribe
   const [suggestions, setSuggestions] = useState([]); 
   const [showSuggestions, setShowSuggestions] = useState(false);
+  
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cart, setCart] = useState([]);
@@ -123,12 +126,16 @@ export default function App() {
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
+  
+  // Estado para edición de perfil
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '', address: '' });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // ESTADOS DE FILTROS Y ORDENAMIENTO
   const [setsList, setSetsList] = useState([]);
   const [activeSet, setActiveSet] = useState('');
-  const [activeColor, setActiveColor] = useState(''); // w, u, b, r, g, c, m
-  const [sortOption, setSortOption] = useState('released'); // name, usd_asc, usd_desc, released
+  const [activeColor, setActiveColor] = useState(''); 
+  const [sortOption, setSortOption] = useState('released'); 
 
   const wrapperRef = useRef(null);
 
@@ -147,7 +154,10 @@ export default function App() {
   const goHome = () => {
     if (selectedCard) setSelectedCard(null);
     if (window.location.hash) window.history.replaceState(null, '', ' ');
-    setView('store'); setQuery(''); setActiveSet(''); setActiveColor(''); setSortOption('released');
+    setView('store'); 
+    setQuery(''); 
+    setInputValue(''); // Limpiar la barra visualmente
+    setActiveSet(''); setActiveColor(''); setSortOption('released');
   };
 
   // --- SINCRONIZACIÓN FIREBASE ---
@@ -156,15 +166,35 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (u) {
         let role = 'user';
+        let profileData = {};
         if (db) {
           try {
             const snap = await getDoc(doc(db, "users", u.uid));
-            if (snap.exists()) role = snap.data().role || 'user';
+            if (snap.exists()) {
+               const data = snap.data();
+               role = data.role || 'user';
+               profileData = data.profile || {};
+            }
           } catch (e) { if (e.code === 'permission-denied') setPermissionError(true); }
         }
         setUser({ uid: u.uid, email: u.email, role });
-        setCheckoutForm(prev => ({ ...prev, email: u.email }));
-      } else setUser(null);
+        setUserProfile(profileData);
+        // Pre-llenar forms
+        setCheckoutForm({ 
+            name: profileData.name || '', 
+            email: u.email, 
+            phone: profileData.phone || '', 
+            address: profileData.address || '' 
+        });
+        setProfileForm({
+            name: profileData.name || '',
+            phone: profileData.phone || '',
+            address: profileData.address || ''
+        });
+      } else {
+        setUser(null);
+        setUserProfile({});
+      }
     });
     return () => unsub();
   }, []);
@@ -243,6 +273,23 @@ export default function App() {
     } catch (e) { setAuthForm({...authForm, error: e.message}); }
   };
 
+  const saveProfile = async (e) => {
+      e.preventDefault();
+      if (!db || !user) return;
+      try {
+          await setDoc(doc(db, "users", user.uid), {
+              profile: profileForm
+          }, { merge: true });
+          
+          setUserProfile(profileForm);
+          setCheckoutForm(prev => ({ ...prev, ...profileForm }));
+          setIsEditingProfile(false);
+          alert("Perfil actualizado correctamente.");
+      } catch (e) {
+          alert("Error al guardar perfil: " + e.message);
+      }
+  };
+
   const handleCheckout = async (e) => {
     e.preventDefault();
     if (!db) return alert("Sin conexión");
@@ -268,7 +315,7 @@ export default function App() {
     } catch (e) { alert(e.message); } finally { setLoading(false); }
   };
 
-  // --- API SCRYFALL CON FILTROS ---
+  // --- API SCRYFALL ---
   const fetchCards = async (overrideQuery = null) => {
     setLoading(true);
     try {
@@ -315,7 +362,6 @@ export default function App() {
 
     if (inStockIds.length > 0) {
       setLoading(true);
-      // Paginación simple para demo, max 75 ids por request
       const batchIds = inStockIds.slice(0, 75).map(id => ({ id }));
       fetch('https://api.scryfall.com/cards/collection', {
         method: 'POST',
@@ -343,10 +389,24 @@ export default function App() {
     }
   }, [inventory, query, activeSet, activeColor, sortOption]);
 
-  const handleQueryChange = (e) => {
-    const val = e.target.value; setQuery(val);
+  const handleInputChange = (e) => {
+    const val = e.target.value; 
+    setInputValue(val); // Solo actualiza el visual
     if(val.length > 2) fetch(`https://api.scryfall.com/cards/autocomplete?q=${val}`).then(r=>r.json()).then(d=>setSuggestions(d.data||[]));
     else setShowSuggestions(false);
+  };
+
+  const handleSearchSubmit = (e) => {
+      e.preventDefault();
+      setQuery(inputValue); // Aqui si lanza la búsqueda real
+      setShowSuggestions(false);
+  };
+
+  const selectSuggestion = (name) => {
+    setInputValue(name);
+    setQuery(name);
+    setShowSuggestions(false);
+    // El useEffect de query se encargará de buscar
   };
 
   const addToCart = (card, finish, price) => {
@@ -398,15 +458,7 @@ export default function App() {
         </select>
       </div>
       <div className="flex gap-2">
-        {[
-          { id: 'w', bg: 'bg-[#f8e7b9]', border: 'border-yellow-200' },
-          { id: 'u', bg: 'bg-[#b3ceea]', border: 'border-blue-300' },
-          { id: 'b', bg: 'bg-[#a69f9d]', border: 'border-slate-400' },
-          { id: 'r', bg: 'bg-[#eb9f82]', border: 'border-red-300' },
-          { id: 'g', bg: 'bg-[#c4d3ca]', border: 'border-green-200' },
-          { id: 'c', bg: 'bg-[#ccc2c0]', border: 'border-gray-400', label: 'C' },
-          { id: 'm', bg: 'bg-gradient-to-br from-yellow-200 via-red-300 to-blue-300', border: 'border-purple-300', label: 'M' }
-        ].map(color => (
+        {[{ id: 'w', bg: 'bg-[#f8e7b9]', border: 'border-yellow-200' }, { id: 'u', bg: 'bg-[#b3ceea]', border: 'border-blue-300' }, { id: 'b', bg: 'bg-[#a69f9d]', border: 'border-slate-400' }, { id: 'r', bg: 'bg-[#eb9f82]', border: 'border-red-300' }, { id: 'g', bg: 'bg-[#c4d3ca]', border: 'border-green-200' }, { id: 'c', bg: 'bg-[#ccc2c0]', border: 'border-gray-400', label: 'C' }, { id: 'm', bg: 'bg-gradient-to-br from-yellow-200 via-red-300 to-blue-300', border: 'border-purple-300', label: 'M' }].map(color => (
           <button key={color.id} onClick={() => setActiveColor(activeColor === color.id ? '' : color.id)} className={`w-8 h-8 rounded-full ${color.bg} border-2 ${color.border} flex items-center justify-center transition-all transform hover:scale-110 ${activeColor === color.id ? 'ring-2 ring-white scale-110 shadow-lg' : 'opacity-70 hover:opacity-100'}`} title={`Filtrar por ${color.id.toUpperCase()}`}>
             {color.label && <span className="text-black font-bold text-xs">{color.label}</span>}
           </button>
@@ -508,9 +560,9 @@ export default function App() {
             <h3 className="text-xl font-bold text-slate-200 mb-4">Datos de Envío</h3>
             <form onSubmit={handleCheckout} className="space-y-4">
                 <div><label className="block text-slate-400 text-sm mb-1">Nombre Completo</label><input required type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.name} onChange={e => setCheckoutForm({...checkoutForm, name: e.target.value})} /></div>
-                <div><label className="block text-slate-400 text-sm mb-1">Teléfono</label><input required type="tel" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.phone} onChange={e => setCheckoutForm({...checkoutForm, phone: e.target.value})} /></div>
+                <div><label className="block text-slate-400 text-sm mb-1">Teléfono / WhatsApp</label><input required type="tel" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.phone} onChange={e => setCheckoutForm({...checkoutForm, phone: e.target.value})} placeholder="5555-5555" /></div>
                 <div><label className="block text-slate-400 text-sm mb-1">Email</label><input required type="email" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={checkoutForm.email} onChange={e => setCheckoutForm({...checkoutForm, email: e.target.value})} /></div>
-                <div><label className="block text-slate-400 text-sm mb-1">Dirección</label><textarea required className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-24" value={checkoutForm.address} onChange={e => setCheckoutForm({...checkoutForm, address: e.target.value})} /></div>
+                <div><label className="block text-slate-400 text-sm mb-1">Dirección de Entrega</label><textarea required className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-24" value={checkoutForm.address} onChange={e => setCheckoutForm({...checkoutForm, address: e.target.value})} /></div>
                 <Button type="submit" variant="success" className="w-full mt-6 py-3" disabled={loading}>{loading ? 'Procesando...' : `Confirmar Pedido (Q${cartTotal.toFixed(2)})`}</Button>
                 <Button variant="secondary" onClick={() => setView('store')} className="w-full mt-2" type="button">Cancelar</Button>
             </form>
@@ -526,9 +578,9 @@ export default function App() {
       <p className="text-slate-400 mb-8 text-lg">Tu pedido #{lastOrderId} ha sido reservado.</p>
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 max-w-md w-full mb-8">
         <h3 className="text-white font-bold mb-4">Siguiente Paso: Realizar Pago</h3>
-        <p className="text-slate-400 text-sm mb-6">Para confirmar, envíanos un mensaje por WhatsApp con el detalle.</p>
+        <p className="text-slate-400 text-sm mb-6">Para confirmar tu pedido y coordinar el envío, envíanos un mensaje por WhatsApp con el detalle de tu orden.</p>
         <a href={`https://wa.me/50246903693?text=Hola, orden %23${lastOrderId}. Nombre: ${checkoutForm.name}. Total: Q${lastOrderTotal.toFixed(2)}.`} target="_blank" rel="noopener noreferrer" className="w-full block">
-          <Button variant="whatsapp" className="w-full py-3 text-lg"><MessageCircle size={24} /> Enviar a WhatsApp</Button>
+          <Button variant="whatsapp" className="w-full py-3 text-lg"><MessageCircle size={24} /> Enviar mensaje a WhatsApp</Button>
         </a>
       </div>
       <Button onClick={() => setView('store')} variant="secondary">Volver a la Tienda</Button>
@@ -615,7 +667,7 @@ export default function App() {
         <p className="text-slate-400 text-sm mb-4">Busca cartas en Scryfall para añadirlas a tu stock local.</p>
         <form onSubmit={(e) => { e.preventDefault(); fetchCards(query, true); }} className="flex gap-2">
           <div className="flex-1 relative" ref={wrapperRef}>
-            <input type="text" placeholder="Buscar carta para stock..." className="w-full bg-slate-950 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none" value={query} onChange={handleQueryChange} onFocus={() => query.length > 2 && setShowSuggestions(true)} />
+            <input type="text" placeholder="Buscar carta para stock..." className="w-full bg-slate-950 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none" value={inputValue} onChange={handleInputChange} />
             {showSuggestions && suggestions.length > 0 && (
               <div className="absolute top-full left-0 mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto custom-scrollbar">{suggestions.map((s, i) => <button key={i} type="button" onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300 border-b border-slate-800 last:border-0">{s}</button>)}</div>
             )}
@@ -662,7 +714,39 @@ export default function App() {
 
   const renderProfile = () => (
     <div className="max-w-4xl mx-auto p-4 sm:p-8">
-      <div className="mb-8 flex items-center gap-4"><div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">{user?.email?.charAt(0).toUpperCase()}</div><div><h2 className="text-3xl font-bold text-white">Mi Perfil</h2><p className="text-slate-400">{user?.email}</p>{user?.role === 'admin' && <Badge color="bg-yellow-600">Administrador</Badge>}</div></div>
+      <div className="mb-8 flex flex-wrap gap-4 items-center justify-between">
+        <div className="flex items-center gap-4">
+            <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">{user?.email?.charAt(0).toUpperCase()}</div>
+            <div>
+                <h2 className="text-3xl font-bold text-white">Mi Perfil</h2>
+                <p className="text-slate-400">{user?.email}</p>
+                {user?.role === 'admin' && <Badge color="bg-yellow-600">Administrador</Badge>}
+            </div>
+        </div>
+        <Button variant="outline" onClick={() => setIsEditingProfile(!isEditingProfile)}>{isEditingProfile ? 'Cancelar Edición' : 'Editar Información'}</Button>
+      </div>
+
+      {isEditingProfile && (
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 mb-8 animate-in slide-in-from-top">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Edit size={18}/> Editar Datos Personales</h3>
+            <form onSubmit={saveProfile} className="space-y-4">
+                <div><label className="block text-slate-400 text-sm mb-1">Nombre Completo</label><input type="text" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={profileForm.name} onChange={e => setProfileForm({...profileForm, name: e.target.value})} /></div>
+                <div><label className="block text-slate-400 text-sm mb-1">Teléfono</label><input type="tel" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={profileForm.phone} onChange={e => setProfileForm({...profileForm, phone: e.target.value})} /></div>
+                <div><label className="block text-slate-400 text-sm mb-1">Dirección Predeterminada</label><textarea className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white h-20" value={profileForm.address} onChange={e => setProfileForm({...profileForm, address: e.target.value})} /></div>
+                <div className="flex justify-end"><Button type="submit" variant="success"><Save size={18} className="mr-2"/> Guardar Cambios</Button></div>
+            </form>
+        </div>
+      )}
+
+      {/* Vista de datos actuales (si no edita) */}
+      {!isEditingProfile && (userProfile.name || userProfile.phone || userProfile.address) && (
+         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 mb-8 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+             <div><span className="block text-slate-500 text-xs uppercase mb-1">Nombre</span><span className="text-white font-medium">{userProfile.name || '-'}</span></div>
+             <div><span className="block text-slate-500 text-xs uppercase mb-1">Teléfono</span><span className="text-white font-medium">{userProfile.phone || '-'}</span></div>
+             <div><span className="block text-slate-500 text-xs uppercase mb-1">Dirección</span><span className="text-white font-medium">{userProfile.address || '-'}</span></div>
+         </div>
+      )}
+
       <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden shadow-xl">
           <div className="p-6 border-b border-slate-700 bg-slate-900/50"><h3 className="text-xl font-bold text-white flex items-center gap-2"><Clock size={20} className="text-purple-400"/> Historial de Pedidos</h3></div>
           {orders.length === 0 ? <div className="p-12 text-center text-slate-500"><Package size={48} className="mx-auto mb-4 opacity-20"/><p>No has realizado ningún pedido todavía.</p><Button variant="outline" onClick={() => setView('store')} className="mt-4 mx-auto">Ir a la Tienda</Button></div> : (
@@ -690,9 +774,12 @@ export default function App() {
         </div>
         {view === 'store' && (
           <div className="flex-1 max-w-md mx-4 relative" ref={wrapperRef}>
-            <input className="w-full bg-slate-950 border border-slate-700 rounded-full py-1.5 px-4 text-sm focus:border-purple-500 outline-none" placeholder="Buscar cartas..." value={query} onChange={handleQueryChange} onFocus={() => query.length > 2 && setShowSuggestions(true)} />
+            <form onSubmit={handleSearchSubmit} className="relative">
+              <input className="w-full bg-slate-950 border border-slate-700 rounded-full py-1.5 px-4 text-sm focus:border-purple-500 outline-none" placeholder="Buscar cartas..." value={inputValue} onChange={handleInputChange} onFocus={() => inputValue.length > 2 && setShowSuggestions(true)} />
+              <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"><Search size={16}/></button>
+            </form>
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute top-full w-full bg-slate-900 border border-slate-700 rounded mt-1 z-50 max-h-60 overflow-y-auto">{suggestions.map((s, i) => <div key={i} onClick={() => { setQuery(s); setShowSuggestions(false); }} className="p-2 hover:bg-slate-800 cursor-pointer text-sm">{s}</div>)}</div>
+              <div className="absolute top-full w-full bg-slate-900 border border-slate-700 rounded mt-1 z-50 max-h-60 overflow-y-auto">{suggestions.map((s, i) => <div key={i} onClick={() => selectSuggestion(s)} className="p-2 hover:bg-slate-800 cursor-pointer text-sm">{s}</div>)}</div>
             )}
           </div>
         )}
@@ -789,6 +876,7 @@ export default function App() {
         </div>
       )}
       
+      {/* Modales de Cartas y Ordenes - (Mantenemos la implementación anterior) */}
       {selectedCard && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" onClick={closeCardModal}>
            <div className="bg-slate-900 p-6 rounded-xl max-w-4xl w-full flex flex-col md:flex-row gap-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -805,7 +893,7 @@ export default function App() {
                     {selectedCard.card_faces ? selectedCard.card_faces.map((f, i) => <div key={i} className="mb-2 last:mb-0"><strong className="block text-purple-300">{f.name}</strong><p>{f.oracle_text}</p></div>) : <p>{selectedCard.oracle_text}</p>}
                  </div>
                  <div className="mt-auto space-y-3">
-                   <Button variant="outline" onClick={() => { setQuery(selectedCard.name); closeCardModal(); fetchCards(); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
+                   <Button variant="outline" onClick={() => { setQuery(selectedCard.name); setInputValue(selectedCard.name); closeCardModal(); fetchCards(); }} className="w-full justify-start border-slate-700 text-slate-300"><Layers size={16}/> Ver otras versiones</Button>
                    
                    {/* Normal Row Modal */}
                    <div className="bg-slate-800 p-4 rounded-lg flex items-center justify-between">
