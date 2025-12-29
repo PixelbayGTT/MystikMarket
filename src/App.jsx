@@ -1,3 +1,5 @@
+import { db } from './firebase'; 
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
