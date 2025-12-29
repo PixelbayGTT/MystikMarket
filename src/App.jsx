@@ -29,7 +29,10 @@ const firebaseConfig = {
 };
 
 // Inicialización segura de Firebase
-let app, auth, db;
+let app = null;
+let auth = null;
+let db = null;
+
 const isConfigured = firebaseConfig.apiKey !== "TU_API_KEY";
 
 if (isConfigured) {
@@ -38,7 +41,7 @@ if (isConfigured) {
     auth = getAuth(app);
     db = getFirestore(app);
   } catch (e) {
-    console.error("Error inicializando Firebase:", e);
+    console.error("Error inicializando Firebase. Verifica tu configuración:", e);
   }
 }
 
@@ -90,7 +93,7 @@ export default function App() {
   const [view, setView] = useState('store');
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
-  const [permissionError, setPermissionError] = useState(false); // Estado para detectar bloqueo de Firebase
+  const [permissionError, setPermissionError] = useState(false); 
   
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]); 
@@ -110,13 +113,19 @@ export default function App() {
 
   // 1. Autenticación
   useEffect(() => {
+    // GUARDIA: Si auth no se inicializó, no intentamos usarlo
+    if (!auth) return;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         let role = 'user';
         try {
-          const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
-          if (userSnap.exists()) {
-            role = userSnap.data().role || 'user';
+          // GUARDIA: Verificar si db existe antes de usarlo
+          if (db) {
+            const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+            if (userSnap.exists()) {
+              role = userSnap.data().role || 'user';
+            }
           }
         } catch (e) {
           console.warn("No se pudo leer el rol, asignando default 'user'", e);
@@ -133,12 +142,15 @@ export default function App() {
 
   // 2. Inventario
   useEffect(() => {
+    // GUARDIA: Si db no se inicializó, no intentamos usarlo
+    if (!db) return;
+
     const q = collection(db, "inventory");
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const inv = {};
       snapshot.forEach(doc => inv[doc.id] = doc.data());
       setInventory(inv);
-      setPermissionError(false); // Si tiene éxito, limpiamos el error
+      setPermissionError(false); 
     }, (error) => {
       console.error("Error inventario:", error);
       if (error.code === 'permission-denied') setPermissionError(true);
@@ -148,7 +160,9 @@ export default function App() {
 
   // 3. Órdenes
   useEffect(() => {
-    if (!user) return;
+    // GUARDIA: Si db o user no existen, no hacemos nada
+    if (!user || !db) return;
+
     const q = query(collection(db, "orders"), orderBy("date", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allOrders = snapshot.docs.map(doc => ({
@@ -183,7 +197,7 @@ export default function App() {
   const getStock = (id, finish) => inventory[id]?.[finish] || 0;
 
   const updateStock = async (id, finish, val) => {
-    if (!user || user.role !== 'admin') return;
+    if (!user || user.role !== 'admin' || !db) return;
     const qty = parseInt(val);
     if (isNaN(qty)) return;
     try {
@@ -209,15 +223,22 @@ export default function App() {
 
   const handleAuth = async (e) => {
     e.preventDefault();
+    if (!auth) {
+      setAuthForm({ ...authForm, error: "Error: Firebase Auth no está listo." });
+      return;
+    }
+
     setAuthForm({ ...authForm, error: '' });
     try {
       if (authForm.isRegister) {
         const cred = await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
-        await setDoc(doc(db, "users", cred.user.uid), {
-          email: authForm.email,
-          role: 'user',
-          createdAt: serverTimestamp()
-        });
+        if (db) {
+          await setDoc(doc(db, "users", cred.user.uid), {
+            email: authForm.email,
+            role: 'user',
+            createdAt: serverTimestamp()
+          });
+        }
       } else {
         await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
       }
@@ -234,6 +255,10 @@ export default function App() {
 
   const handleCheckout = async (e) => {
     e.preventDefault();
+    if (!db) {
+      alert("No hay conexión con la base de datos.");
+      return;
+    }
     setLoading(true);
     try {
       const batch = writeBatch(db);
