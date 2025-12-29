@@ -392,8 +392,16 @@ export default function App() {
   const handleInputChange = (e) => {
     const val = e.target.value; 
     setInputValue(val); // Solo actualiza el visual
-    if(val.length > 2) fetch(`https://api.scryfall.com/cards/autocomplete?q=${val}`).then(r=>r.json()).then(d=>setSuggestions(d.data||[]));
-    else setShowSuggestions(false);
+    if(val.length > 2) {
+      fetch(`https://api.scryfall.com/cards/autocomplete?q=${val}`)
+        .then(r=>r.json())
+        .then(d=> {
+           setSuggestions(d.data||[]);
+           setShowSuggestions(true); // <--- FORZAR APERTURA AQUÍ
+        });
+    } else {
+      setShowSuggestions(false);
+    }
   };
 
   const handleSearchSubmit = (e) => {
