@@ -5,43 +5,39 @@ import {
   ShoppingCart, Search, X, Trash2, CreditCard, ShieldCheck, 
   Menu, Zap, Filter, ChevronDown, Info, Layers, User, 
   LogOut, Package, Settings, ClipboardList, ExternalLink,
-  Clock, CheckCircle, Truck, XCircle
+  Clock, CheckCircle, Truck, XCircle, AlertTriangle
 } from 'lucide-react';
 
-// --- CONFIGURACIÓN SIMULADA (CAMBIAR A 'TRUE' CUANDO TENGAS FIREBASE) ---
-const USE_FIREBASE = false; 
+// --- IMPORTACIONES DE FIREBASE REALES ---
+import { initializeApp } from "firebase/app";
+import { 
+  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
+  signOut, onAuthStateChanged 
+} from "firebase/auth";
+import { 
+  getFirestore, collection, doc, getDoc, setDoc, addDoc, 
+  updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch, query, orderBy 
+} from "firebase/firestore";
 
-// --- MOCK DATABASE (Para la demo sin backend) ---
-const MOCK_INVENTORY = {
-  // ID de Scryfall : { normal: cantidad, foil: cantidad }
-  "203f5900-3449-46ba-b83c-648c6f937666": { normal: 4, foil: 1 },
+// --- CONFIGURACIÓN DE FIREBASE (REEMPLAZAR CON TUS DATOS REALES) ---
+const firebaseConfig = {
+  apiKey: "TU_API_KEY",
+  authDomain: "TU_PROYECTO.firebaseapp.com",
+  projectId: "TU_PROYECTO",
+  storageBucket: "TU_PROYECTO.appspot.com",
+  messagingSenderId: "TU_MESSAGING_ID",
+  appId: "TU_APP_ID"
 };
 
-const MOCK_ORDERS = [
-  { 
-    id: "ord-001", 
-    date: new Date().toISOString(), 
-    buyer: { name: "Juan Pérez", email: "juan@test.com" }, 
-    total: 2.50, 
-    status: "pagado",
-    items: [{ 
-      id: "203f5900-3449-46ba-b83c-648c6f937666",
-      name: "Sol Ring", 
-      set: "Commander Legends",
-      collector_number: "415",
-      image: "https://cards.scryfall.io/normal/front/2/0/203f5900-3449-46ba-b83c-648c6f937666.jpg",
-      quantity: 1, 
-      finish: "normal",
-      price: 2.50
-    }] 
-  }
-];
-
-// Usuarios simulados iniciales
-const INITIAL_USERS = [
-  { email: 'demo@user.com', password: '123', role: 'user' },
-  { email: 'juan@test.com', password: '123', role: 'user' } // Usuario de prueba con ordenes
-];
+// Inicializar Firebase (Solo si hay config, para evitar errores en la vista previa sin claves)
+let app, auth, db;
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (e) {
+  console.warn("Firebase no inicializado. Asegúrate de poner tus credenciales en firebaseConfig.");
+}
 
 // --- Componentes UI Reutilizables ---
 
@@ -55,14 +51,8 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
     success: "bg-green-600 hover:bg-green-500 text-white",
     ghost: "bg-transparent hover:bg-slate-800 text-slate-300"
   };
-  
   return (
-    <button 
-      type={type}
-      onClick={onClick} 
-      disabled={disabled}
-      className={`${baseStyle} ${variants[variant]} ${className}`}
-    >
+    <button type={type} onClick={onClick} disabled={disabled} className={`${baseStyle} ${variants[variant]} ${className}`}>
       {children}
     </button>
   );
@@ -77,14 +67,14 @@ const Badge = ({ children, color = 'bg-blue-600' }) => (
 // --- Componente Principal ---
 
 export default function App() {
-  // Estados Globales
-  const [user, setUser] = useState(null); 
-  const [registeredUsers, setRegisteredUsers] = useState(INITIAL_USERS); // Base de datos local de usuarios
-  const [view, setView] = useState('store'); // store, login, profile, admin-orders, admin-inventory...
-  const [inventory, setInventory] = useState(MOCK_INVENTORY);
-  const [orders, setOrders] = useState(MOCK_ORDERS);
+  // --- ESTADOS GLOBALES ---
+  const [user, setUser] = useState(null); // { uid, email, role }
+  const [view, setView] = useState('store');
+  const [inventory, setInventory] = useState({}); // Ahora sincronizado con Firestore
+  const [orders, setOrders] = useState([]); // Ahora sincronizado con Firestore
+  const [appError, setAppError] = useState(null); // Para errores globales de conexión
 
-  // Estados de Tienda
+  // --- ESTADOS DE TIENDA Y UI ---
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]); 
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -94,16 +84,95 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   
-  // Estados de Checkout y Auth
+  // --- FORMULARIOS ---
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
 
   const wrapperRef = useRef(null);
 
-  // --- Inicialización ---
+  // --- 1. SINCRONIZACIÓN CON FIREBASE ---
+  
+  // A) Autenticación
   useEffect(() => {
-    fetchCards('format:commander year>=2021', false);
+    if (!auth) return;
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Buscar el rol del usuario en la colección 'users'
+        const userDocRef = doc(db, "users", firebaseUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        const userData = userDoc.exists() ? userDoc.data() : {};
+        
+        setUser({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          role: userData.role || 'user'
+        });
+        
+        // Precargar email en checkout
+        setCheckoutForm(prev => ({ ...prev, email: firebaseUser.email }));
+      } else {
+        setUser(null);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // B) Inventario en Tiempo Real
+  useEffect(() => {
+    if (!db) return;
+    // Escuchar cambios en la colección 'inventory'
+    const q = collection(db, "inventory");
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const invData = {};
+      snapshot.forEach(doc => {
+        invData[doc.id] = doc.data();
+      });
+      setInventory(invData);
+    }, (error) => {
+      console.error("Error al sincronizar inventario:", error);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // C) Órdenes en Tiempo Real (Solo si es Admin o para el usuario propio)
+  useEffect(() => {
+    if (!db || !user) {
+      setOrders([]);
+      return;
+    }
+
+    let q;
+    if (user.role === 'admin') {
+      // Admin ve todas las órdenes
+      q = query(collection(db, "orders"), orderBy("date", "desc"));
+    } else {
+      // Usuario ve solo sus órdenes (filtrado en cliente por simplicidad, idealmente reglas de seguridad)
+      q = query(collection(db, "orders"), orderBy("date", "desc")); 
+    }
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ordersData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Convertir Timestamp de Firebase a fecha legible si es necesario
+        date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
+      }));
+      
+      // Filtrado de seguridad en cliente (si no configuraste reglas estrictas aún)
+      if (user.role !== 'admin') {
+        setOrders(ordersData.filter(o => o.buyer.email === user.email));
+      } else {
+        setOrders(ordersData);
+      }
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // Carga inicial de cartas (Tendencias)
+  useEffect(() => {
+    fetchCards('format:commander year>=2022', false);
     
+    // Listener para cerrar autocompletado
     function handleClickOutside(event) {
       if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
         setShowSuggestions(false);
@@ -113,8 +182,153 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- API & Lógica de Negocio ---
 
+  // --- 2. LÓGICA DE NEGOCIO (BACKEND REAL) ---
+
+  // Obtener stock desde el estado sincronizado (Fuente de verdad)
+  const getStock = (cardId, finish) => {
+    if (!inventory[cardId]) return 0;
+    return inventory[cardId][finish] || 0;
+  };
+
+  // Función Admin: Actualizar stock en Firestore
+  const updateStock = async (cardId, finish, newQuantity) => {
+    if (!db || !user || user.role !== 'admin') return;
+    
+    const qty = parseInt(newQuantity);
+    if (isNaN(qty) || qty < 0) return;
+
+    try {
+      const docRef = doc(db, "inventory", cardId);
+      // setDoc con merge: true crea el documento si no existe, o actualiza solo el campo si existe
+      await setDoc(docRef, { [finish]: qty }, { merge: true });
+    } catch (error) {
+      console.error("Error actualizando stock:", error);
+      alert("Error al actualizar la base de datos.");
+    }
+  };
+
+  // Función Checkout: Transacción Atómica
+  const handleCheckoutSubmit = async (e) => {
+    e.preventDefault();
+    if (!db) {
+      alert("Error de conexión con la base de datos.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Usamos un 'batch' para asegurar que todo ocurra o nada ocurra
+      const batch = writeBatch(db);
+      
+      // 1. Verificar Stock de cada item ANTES de procesar
+      for (const item of cart) {
+        const itemRef = doc(db, "inventory", item.id);
+        const itemSnap = await getDoc(itemRef);
+        
+        if (!itemSnap.exists()) {
+          throw new Error(`El producto ${item.name} ya no está disponible.`);
+        }
+        
+        const currentStock = itemSnap.data()[item.finish] || 0;
+        
+        if (currentStock < item.quantity) {
+          throw new Error(`Stock insuficiente para ${item.name} (${item.finish}). Solo quedan ${currentStock}.`);
+        }
+
+        // 2. Preparar la resta de stock
+        // Nota: En Firestore cliente no podemos hacer decrementos atómicos condicionales complejos fácilmente en un batch sin Cloud Functions,
+        // pero podemos calcular el nuevo valor aquí ya que leímos el dato hace milisegundos.
+        const newStock = currentStock - item.quantity;
+        batch.update(itemRef, { [item.finish]: newStock });
+      }
+
+      // 3. Crear la orden
+      const orderRef = doc(collection(db, "orders"));
+      const newOrder = {
+        date: serverTimestamp(),
+        buyer: { ...checkoutForm, uid: user ? user.uid : 'guest', email: user ? user.email : checkoutForm.email },
+        total: cartTotal,
+        items: cart,
+        status: 'pendiente'
+      };
+      batch.set(orderRef, newOrder);
+
+      // 4. Ejecutar todo
+      await batch.commit();
+
+      // 5. Éxito
+      setView('success');
+      setCart([]);
+      setCheckoutForm({ name: '', email: '', address: '' });
+
+    } catch (error) {
+      console.error("Error en checkout:", error);
+      alert(error.message); // Mostrar mensaje amigable al usuario (ej: "Stock insuficiente")
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Función Auth: Login/Registro Real
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    if (!auth) {
+      setAuthForm({ ...authForm, error: "Firebase no configurado." });
+      return;
+    }
+    
+    setAuthForm({ ...authForm, error: '' });
+
+    try {
+      if (authForm.isRegister) {
+        // Registro
+        const userCredential = await createUserWithEmailAndPassword(auth, authForm.email, authForm.password);
+        // Crear perfil de usuario en Firestore
+        await setDoc(doc(db, "users", userCredential.user.uid), {
+          email: authForm.email,
+          role: 'user', // Por defecto todos son usuarios normales
+          createdAt: serverTimestamp()
+        });
+      } else {
+        // Login
+        await signInWithEmailAndPassword(auth, authForm.email, authForm.password);
+      }
+      setView('store');
+    } catch (error) {
+      console.error("Auth error:", error);
+      let msg = "Error de autenticación.";
+      if (error.code === 'auth/wrong-password') msg = "Contraseña incorrecta.";
+      if (error.code === 'auth/user-not-found') msg = "Usuario no encontrado.";
+      if (error.code === 'auth/email-already-in-use') msg = "El email ya está registrado.";
+      setAuthForm({ ...authForm, error: msg });
+    }
+  };
+
+  const handleLogout = async () => {
+    if (auth) await signOut(auth);
+    setCart([]);
+    setView('store');
+  };
+
+  const updateOrderStatus = async (orderId, newStatus) => {
+    if (!db) return;
+    try {
+      await updateDoc(doc(db, "orders", orderId), { status: newStatus });
+    } catch (e) { console.error(e); alert("Error al actualizar estado"); }
+  };
+
+  const deleteOrder = async (orderId) => {
+    if (!db) return;
+    if (window.confirm('¿Eliminar orden permanentemente? Esto no restaura el stock.')) {
+      try {
+        await deleteDoc(doc(db, "orders", orderId));
+      } catch (e) { console.error(e); alert("Error al eliminar"); }
+    }
+  };
+
+  // --- API DE SCRYFALL (Búsqueda de cartas) ---
   const fetchCards = async (searchQuery, isUserSearch = true) => {
     if (!searchQuery.trim()) return;
     setLoading(true);
@@ -139,11 +353,10 @@ export default function App() {
     }
   };
 
-  // Autocompletado (Restaurado)
+  // Autocompletado
   const handleQueryChange = async (e) => {
     const val = e.target.value;
     setQuery(val);
-    
     if (val.length > 2) {
       try {
         const response = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(val)}`);
@@ -152,12 +365,8 @@ export default function App() {
           setSuggestions(data.data);
           setShowSuggestions(true);
         }
-      } catch (error) {
-        console.error("Autocomplete error:", error);
-      }
-    } else {
-      setShowSuggestions(false);
-    }
+      } catch (error) { console.error(error); }
+    } else { setShowSuggestions(false); }
   };
 
   const selectSuggestion = (name) => {
@@ -166,77 +375,7 @@ export default function App() {
     setTimeout(() => fetchCards(name, true), 50);
   };
 
-  // Auth Logic (Mejorada)
-  const handleAuth = (e) => {
-    e.preventDefault();
-    setAuthForm({ ...authForm, error: '' });
-
-    // 1. Admin Login (Hardcoded)
-    if (authForm.email === 'admin@mystic.com' && authForm.password === 'admin123') {
-      setUser({ email: authForm.email, role: 'admin' });
-      setView('store');
-      return;
-    }
-
-    // 2. Registro de Usuario
-    if (authForm.isRegister) {
-      const exists = registeredUsers.find(u => u.email === authForm.email);
-      if (exists) {
-        setAuthForm({ ...authForm, error: 'El usuario ya existe.' });
-        return;
-      }
-      const newUser = { email: authForm.email, password: authForm.password, role: 'user' };
-      setRegisteredUsers([...registeredUsers, newUser]);
-      setUser(newUser);
-      setView('store');
-    } 
-    // 3. Inicio de Sesión
-    else {
-      const foundUser = registeredUsers.find(u => u.email === authForm.email && u.password === authForm.password);
-      if (foundUser) {
-        setUser(foundUser);
-        setView('store');
-      } else {
-        setAuthForm({ ...authForm, error: 'Credenciales inválidas o usuario no registrado.' });
-      }
-    }
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    setView('store');
-    setCart([]);
-    setAuthForm({ email: '', password: '', isRegister: false, error: '' });
-  };
-
-  // --- Gestión de Inventario y Ordenes (Admin) ---
-
-  const updateStock = (cardId, finish, newQuantity) => {
-    setInventory(prev => ({
-      ...prev,
-      [cardId]: {
-        ...prev[cardId],
-        [finish]: parseInt(newQuantity) || 0
-      }
-    }));
-  };
-
-  const getStock = (cardId, finish) => {
-    return inventory[cardId]?.[finish] || 0;
-  };
-
-  const updateOrderStatus = (orderId, newStatus) => {
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-  };
-
-  const deleteOrder = (orderId) => {
-    if (window.confirm('¿Estás seguro de que deseas eliminar esta orden permanentemente?')) {
-      setOrders(prev => prev.filter(o => o.id !== orderId));
-    }
-  };
-
-  // --- Carrito ---
-
+  // --- LÓGICA DE CARRITO (LOCAL) ---
   const addToCart = (card, finish, price) => {
     const currentStock = getStock(card.id, finish);
     const itemInCart = cart.find(i => i.id === card.id && i.finish === finish);
@@ -257,7 +396,7 @@ export default function App() {
         id: card.id, 
         name: card.name, 
         set: card.set_name, 
-        collector_number: card.collector_number, // Guardamos el número
+        collector_number: card.collector_number,
         image: getCardImage(card), 
         finish, 
         price: parseFloat(price), 
@@ -269,34 +408,7 @@ export default function App() {
 
   const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
-  const handleCheckoutSubmit = (e) => {
-    e.preventDefault();
-    const newOrder = {
-      id: `ord-${Date.now()}`,
-      date: new Date().toISOString(),
-      buyer: { ...checkoutForm, email: user ? user.email : checkoutForm.email }, // Asociar al usuario logueado si existe
-      total: cartTotal,
-      items: cart,
-      status: 'pendiente'
-    };
-
-    const newInventory = { ...inventory };
-    cart.forEach(item => {
-      if (newInventory[item.id]) {
-        newInventory[item.id][item.finish] -= item.quantity;
-      }
-    });
-    setInventory(newInventory);
-    setOrders([newOrder, ...orders]);
-
-    setTimeout(() => {
-      setView('success');
-      setCart([]);
-      setCheckoutForm({ name: '', email: '', address: '' });
-    }, 1000);
-  };
-
-  // --- Utilidades ---
+  // --- UTILIDADES ---
   const getCardImage = (card, size = 'normal') => {
     if (card.image_uris?.[size]) return card.image_uris[size];
     if (card.card_faces?.[0]?.image_uris?.[size]) return card.card_faces[0].image_uris[size];
@@ -310,35 +422,25 @@ export default function App() {
     fetchCards(cardName, true);
   };
 
-  // --- VISTAS Y MODALES ---
+  // --- RENDERIZADO (VIEWS) ---
 
   const renderCardModal = () => {
     if (!selectedCard) return null;
-
     const priceNormal = selectedCard.prices?.usd;
     const priceFoil = selectedCard.prices?.usd_foil;
     const stockNormal = getStock(selectedCard.id, 'normal');
     const stockFoil = getStock(selectedCard.id, 'foil');
     
-    const renderOracleText = (text) => {
-        if (!text) return "Sin texto.";
-        return text.split('\n').map((line, i) => (
-            <p key={i} className="mb-2 last:mb-0">{line}</p>
-        ));
-    };
+    const renderOracleText = (text) => text ? text.split('\n').map((l, i) => <p key={i} className="mb-2 last:mb-0">{l}</p>) : "Sin texto.";
 
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedCard(null)}></div>
         <div className="relative bg-slate-900 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar flex flex-col md:flex-row shadow-2xl border border-purple-500/30 animate-in zoom-in-95 duration-200">
-          <button onClick={() => setSelectedCard(null)} className="absolute top-4 right-4 z-10 bg-slate-800/80 p-2 rounded-full text-slate-300 hover:text-white hover:bg-slate-700 transition-colors">
-            <X size={24} />
-          </button>
-
+          <button onClick={() => setSelectedCard(null)} className="absolute top-4 right-4 z-10 bg-slate-800/80 p-2 rounded-full text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"><X size={24} /></button>
           <div className="p-6 md:w-1/2 flex items-center justify-center bg-black/40">
             <img src={getCardImage(selectedCard, 'large')} alt={selectedCard.name} className="rounded-xl shadow-2xl max-h-[60vh] object-contain"/>
           </div>
-
           <div className="p-6 md:w-1/2 flex flex-col">
             <div className="mb-6">
               <h2 className="text-3xl font-bold text-white mb-2">{selectedCard.name}</h2>
@@ -347,27 +449,21 @@ export default function App() {
                  <span className="text-slate-400 text-sm capitalize">{selectedCard.rarity}</span>
                  <span className="text-slate-500 text-xs font-mono">#{selectedCard.collector_number}</span>
               </div>
-              
               <div className="bg-slate-800/50 p-4 rounded-lg border border-slate-700 text-slate-300 font-serif leading-relaxed text-sm md:text-base">
-                 {selectedCard.card_faces ? (
-                    selectedCard.card_faces.map((face, idx) => (
-                        <div key={idx} className="mb-4 last:mb-0 border-b border-slate-700 last:border-0 pb-4 last:pb-0">
-                            <strong className="block text-purple-300 mb-1">{face.name}</strong>
-                            {renderOracleText(face.oracle_text)}
-                        </div>
-                    ))
-                 ) : (renderOracleText(selectedCard.oracle_text))}
+                 {selectedCard.card_faces ? selectedCard.card_faces.map((face, idx) => (
+                    <div key={idx} className="mb-4 last:mb-0 border-b border-slate-700 last:border-0 pb-4 last:pb-0">
+                        <strong className="block text-purple-300 mb-1">{face.name}</strong>
+                        {renderOracleText(face.oracle_text)}
+                    </div>
+                 )) : renderOracleText(selectedCard.oracle_text)}
               </div>
             </div>
-
             <div className="mt-auto space-y-4">
                <Button variant="outline" onClick={() => showAllVersions(selectedCard.name)} className="w-full border-slate-600 text-slate-300 hover:text-white hover:bg-slate-800">
                   <Layers size={18} /> Ver todas las versiones / artes
                </Button>
-
                <h3 className="text-slate-400 font-bold uppercase text-sm tracking-wider pt-2 border-t border-slate-700/50">Opciones de Compra</h3>
                
-               {/* Normal Price Row */}
                <div className="flex items-center justify-between bg-slate-800 p-4 rounded-lg border border-slate-700">
                   <div className="flex flex-col">
                       <span className="text-white font-bold">Versión Normal</span>
@@ -383,7 +479,6 @@ export default function App() {
                   </div>
                </div>
 
-               {/* Foil Price Row */}
                <div className="flex items-center justify-between bg-gradient-to-r from-slate-800 to-purple-900/20 p-4 rounded-lg border border-purple-500/20">
                   <div className="flex flex-col">
                       <div className="flex items-center gap-2">
@@ -408,6 +503,77 @@ export default function App() {
     );
   };
 
+  const renderProductCard = (card) => {
+    const priceNormal = card.prices?.usd;
+    const priceFoil = card.prices?.usd_foil;
+    const stockNormal = getStock(card.id, 'normal');
+    const stockFoil = getStock(card.id, 'foil');
+    const canBuyNormal = priceNormal && stockNormal > 0;
+    const canBuyFoil = priceFoil && stockFoil > 0;
+
+    return (
+      <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden shadow-md hover:shadow-xl hover:shadow-purple-900/20 transition-all border border-slate-700 flex flex-col text-sm group/card">
+        <div className="relative overflow-hidden bg-black aspect-[2.5/3.5] cursor-pointer" onClick={() => setSelectedCard(card)}>
+          <img src={getCardImage(card)} alt={card.name} loading="lazy" className="w-full h-full object-cover transform group-hover/card:scale-110 transition-transform duration-300"/>
+          {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center">
+             <span className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 backdrop-blur-sm border border-white/20">
+                <Info size={12} /> Ver Detalles
+             </span>
+          </div>
+          {stockNormal === 0 && stockFoil === 0 && (
+            <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
+              <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase transform -rotate-12 border-2 border-white">Agotado</span>
+            </div>
+          )}
+        </div>
+        
+        <div className="p-2 flex flex-col flex-grow">
+          <h3 className="font-bold text-white leading-tight mb-0.5 truncate cursor-pointer hover:text-purple-400" onClick={() => setSelectedCard(card)}>{card.name}</h3>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-slate-400 text-[10px] uppercase tracking-wide truncate flex-1">{card.set_name}</span>
+            <span className={`w-2 h-2 rounded-full ${card.rarity === 'mythic' ? 'bg-orange-500' : card.rarity === 'rare' ? 'bg-yellow-400' : 'bg-slate-400'}`}></span>
+          </div>
+          
+          <div className="mt-auto space-y-1.5">
+            <div className={`flex justify-between items-center px-2 py-1 rounded ${stockNormal > 0 ? 'bg-slate-900/50' : 'bg-slate-900/20 opacity-60'}`}>
+              <div className="flex flex-col">
+                <span className="text-slate-300 text-xs">Normal</span>
+                <span className={`text-[9px] ${stockNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockNormal}</span>
+              </div>
+              {priceNormal ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-400 font-bold text-xs">${priceNormal}</span>
+                  <button onClick={() => addToCart(card, 'normal', priceNormal)} disabled={!canBuyNormal} className="p-1 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 rounded text-white transition-colors">
+                    <ShoppingCart size={12} />
+                  </button>
+                </div>
+              ) : <span className="text-slate-600 text-[10px]">--</span>}
+            </div>
+
+            <div className={`flex justify-between items-center px-2 py-1 rounded border border-transparent ${stockFoil > 0 ? 'bg-gradient-to-r from-slate-900/50 to-purple-900/20 border-purple-500/30' : 'bg-slate-900/20 opacity-60'}`}>
+               <div className="flex flex-col">
+                  <div className="flex items-center gap-0.5">
+                    <Zap size={10} className="text-yellow-400" fill="currentColor" />
+                    <span className="text-purple-300 text-xs font-semibold">Foil</span>
+                  </div>
+                  <span className={`text-[9px] ${stockFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockFoil}</span>
+               </div>
+              {priceFoil ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-green-400 font-bold text-xs">${priceFoil}</span>
+                  <button onClick={() => addToCart(card, 'foil', priceFoil)} disabled={!canBuyFoil} className="p-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 rounded text-white transition-colors">
+                    <ShoppingCart size={12} />
+                  </button>
+                </div>
+              ) : <span className="text-slate-600 text-[10px]">--</span>}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderLogin = () => (
     <div className="flex items-center justify-center min-h-[80vh]">
       <div className="bg-slate-800 p-8 rounded-2xl border border-slate-700 w-full max-w-md shadow-2xl">
@@ -418,13 +584,11 @@ export default function App() {
             {authForm.isRegister ? 'Únete a MysticMarket para comprar.' : 'Bienvenido de nuevo, Planeswalker.'}
           </p>
         </div>
-        
         {authForm.error && (
           <div className="bg-red-500/10 border border-red-500/50 text-red-400 p-3 rounded mb-4 text-sm text-center">
             {authForm.error}
           </div>
         )}
-        
         <form onSubmit={handleAuth} className="space-y-4">
           <div>
             <label className="block text-slate-400 text-sm mb-1">Email</label>
@@ -436,36 +600,31 @@ export default function App() {
             <input required type="password" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:border-purple-500 outline-none" 
               value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} placeholder="••••••••"/>
           </div>
-          
           <Button type="submit" variant="primary" className="w-full py-3 mt-4">
             {authForm.isRegister ? 'Registrarse' : 'Entrar'}
           </Button>
         </form>
-
         <div className="mt-6 text-center">
           <button onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})} className="text-purple-400 hover:text-purple-300 text-sm underline">
             {authForm.isRegister ? '¿Ya tienes cuenta? Inicia sesión' : '¿No tienes cuenta? Regístrate'}
           </button>
         </div>
-        
-        {/* SE HA ELIMINADO EL FOOTER CON LOS DATOS DEMO */}
       </div>
     </div>
   );
 
   const renderProfile = () => {
-    // Filtrar órdenes del usuario actual
-    const userOrders = orders.filter(o => o.buyer.email === user.email);
-
+    // Si es admin, puede ver sus propias ordenes aqui tambien, pero tiene su panel aparte
     return (
       <div className="max-w-4xl mx-auto p-4 sm:p-8">
         <div className="mb-8 flex items-center gap-4">
             <div className="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-2xl font-bold text-white shadow-lg">
-                {user.email.charAt(0).toUpperCase()}
+                {user?.email?.charAt(0).toUpperCase()}
             </div>
             <div>
                 <h2 className="text-3xl font-bold text-white">Mi Perfil</h2>
-                <p className="text-slate-400">{user.email}</p>
+                <p className="text-slate-400">{user?.email}</p>
+                {user?.role === 'admin' && <Badge color="bg-yellow-600">Administrador</Badge>}
             </div>
         </div>
 
@@ -476,7 +635,7 @@ export default function App() {
                 </h3>
             </div>
             
-            {userOrders.length === 0 ? (
+            {orders.length === 0 ? (
                 <div className="p-12 text-center text-slate-500">
                     <Package size={48} className="mx-auto mb-4 opacity-20"/>
                     <p>No has realizado ningún pedido todavía.</p>
@@ -484,19 +643,19 @@ export default function App() {
                 </div>
             ) : (
                 <div className="divide-y divide-slate-700">
-                    {userOrders.map(order => (
+                    {orders.map(order => (
                         <div key={order.id} className="p-6 hover:bg-slate-750 transition-colors">
                             <div className="flex flex-wrap justify-between items-start mb-4 gap-4">
                                 <div>
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className="text-lg font-bold text-white">Pedido #{order.id}</span>
+                                        <span className="text-lg font-bold text-white">Pedido #{order.id.substring(0, 8)}...</span>
                                         <Badge color={
                                             order.status === 'pagado' ? 'bg-green-600' : 
                                             order.status === 'cancelado' ? 'bg-red-600' : 
                                             order.status === 'enviado' ? 'bg-blue-600' : 'bg-yellow-600'
                                         }>{order.status}</Badge>
                                     </div>
-                                    <p className="text-sm text-slate-400">{new Date(order.date).toLocaleDateString()} a las {new Date(order.date).toLocaleTimeString()}</p>
+                                    <p className="text-sm text-slate-400">{new Date(order.date).toLocaleString()}</p>
                                 </div>
                                 <div className="text-right">
                                     <p className="text-sm text-slate-400">Total</p>
@@ -554,7 +713,7 @@ export default function App() {
             <tbody className="divide-y divide-slate-700">
               {orders.map(order => (
                 <tr key={order.id} className="hover:bg-slate-700/50 transition-colors">
-                  <td className="p-4 font-mono text-purple-400 align-top">{order.id}</td>
+                  <td className="p-4 font-mono text-purple-400 align-top">{order.id.substring(0, 8)}...</td>
                   <td className="p-4 align-top">{new Date(order.date).toLocaleDateString()}</td>
                   <td className="p-4 align-top">
                     <div className="text-white font-medium">{order.buyer.name}</div>
@@ -564,25 +723,19 @@ export default function App() {
                     <div className="space-y-3">
                       {order.items.map((item, i) => (
                         <div key={i} className="flex items-start gap-3 bg-slate-900/60 p-2 rounded-lg border border-slate-700/50">
-                          {/* Item Thumbnail */}
                           <div className="relative w-10 h-14 flex-shrink-0 bg-black rounded overflow-hidden shadow-sm">
                              <img src={item.image} alt="" className="w-full h-full object-cover"/>
                           </div>
-                          
                           <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-start">
                                <p className="text-white text-sm font-bold truncate">{item.name}</p>
                                <span className="text-green-400 font-mono text-xs">${item.price}</span>
                             </div>
-                            
-                            {/* Version Info */}
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-400 mt-1">
                                <span title="Set Name">{item.set}</span>
                                <span className="text-slate-600">•</span>
                                <span title="Collector Number" className="font-mono">#{item.collector_number || '?'}</span>
                             </div>
-
-                            {/* Finish & Quantity */}
                             <div className="flex items-center gap-2 mt-1.5">
                                <Badge color={item.finish === 'foil' ? 'bg-gradient-to-r from-yellow-600 to-yellow-500 text-black shadow-sm' : 'bg-slate-600 text-slate-200'}>
                                   {item.finish === 'foil' ? 'Foil' : 'Normal'}
@@ -609,11 +762,7 @@ export default function App() {
                     </select>
                   </td>
                   <td className="p-4 align-top">
-                    <button 
-                      onClick={() => deleteOrder(order.id)}
-                      className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors"
-                      title="Eliminar Orden"
-                    >
+                    <button onClick={() => deleteOrder(order.id)} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded transition-colors" title="Eliminar Orden">
                       <Trash2 size={16} />
                     </button>
                   </td>
@@ -630,22 +779,13 @@ export default function App() {
     <div className="max-w-7xl mx-auto p-4">
       <div className="mb-6 bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg">
         <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2"><Package className="text-blue-500"/> Gestión de Inventario</h2>
-        <p className="text-slate-400 text-sm mb-4">Busca cartas en Scryfall para añadirlas a tu stock local.</p>
-        
+        <p className="text-slate-400 text-sm mb-4">Busca cartas en Scryfall para añadirlas a tu stock local en tiempo real.</p>
         <form onSubmit={(e) => { e.preventDefault(); fetchCards(query, true); }} className="flex gap-2">
-          <input 
-            type="text" 
-            placeholder="Buscar carta para stock (ej. Sheoldred)..." 
-            className="flex-1 bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none"
-            value={query}
-            onChange={handleQueryChange}
-          />
+          <input type="text" placeholder="Buscar carta para stock (ej. Sheoldred)..." className="flex-1 bg-slate-900 border border-slate-600 text-white rounded-lg px-4 py-2 focus:border-purple-500 outline-none" value={query} onChange={handleQueryChange} />
           {showSuggestions && suggestions.length > 0 && (
             <div className="absolute top-full left-0 mt-1 w-full max-w-md bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-50">
               {suggestions.map((s, i) => (
-                <button key={i} onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300">
-                  {s}
-                </button>
+                <button key={i} onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-sm text-slate-300">{s}</button>
               ))}
             </div>
           )}
@@ -672,33 +812,19 @@ export default function App() {
                  </div>
                  
                  <div className="bg-slate-900/50 p-3 rounded space-y-3">
-                   {/* Normal Stock Input */}
                    <div className="flex items-center justify-between gap-2">
                      <span className="text-xs text-slate-300 w-12">Normal</span>
                      <div className="flex items-center gap-1 bg-slate-800 rounded border border-slate-600 px-1">
                        <button onClick={() => updateStock(card.id, 'normal', stockNormal - 1)} className="text-slate-400 hover:text-white px-1">-</button>
-                       <input 
-                         className="w-10 bg-transparent text-center text-white text-sm outline-none font-bold"
-                         value={stockNormal}
-                         onChange={(e) => updateStock(card.id, 'normal', e.target.value)}
-                       />
+                       <input className="w-10 bg-transparent text-center text-white text-sm outline-none font-bold" value={stockNormal} onChange={(e) => updateStock(card.id, 'normal', e.target.value)} />
                        <button onClick={() => updateStock(card.id, 'normal', stockNormal + 1)} className="text-slate-400 hover:text-white px-1">+</button>
                      </div>
                    </div>
-
-                   {/* Foil Stock Input */}
                    <div className="flex items-center justify-between gap-2">
-                     <div className="flex items-center gap-1 w-12">
-                        <Zap size={10} className="text-yellow-500" />
-                        <span className="text-xs text-slate-300">Foil</span>
-                     </div>
+                     <div className="flex items-center gap-1 w-12"><Zap size={10} className="text-yellow-500" /><span className="text-xs text-slate-300">Foil</span></div>
                      <div className="flex items-center gap-1 bg-slate-800 rounded border border-purple-500/30 px-1">
                        <button onClick={() => updateStock(card.id, 'foil', stockFoil - 1)} className="text-slate-400 hover:text-white px-1">-</button>
-                       <input 
-                         className="w-10 bg-transparent text-center text-white text-sm outline-none font-bold"
-                         value={stockFoil}
-                         onChange={(e) => updateStock(card.id, 'foil', e.target.value)}
-                       />
+                       <input className="w-10 bg-transparent text-center text-white text-sm outline-none font-bold" value={stockFoil} onChange={(e) => updateStock(card.id, 'foil', e.target.value)} />
                        <button onClick={() => updateStock(card.id, 'foil', stockFoil + 1)} className="text-slate-400 hover:text-white px-1">+</button>
                      </div>
                    </div>
@@ -711,97 +837,14 @@ export default function App() {
     </div>
   );
 
-  const renderProductCard = (card) => {
-    const priceNormal = card.prices?.usd;
-    const priceFoil = card.prices?.usd_foil;
-    
-    // VERIFICACIÓN DE STOCK REAL
-    const stockNormal = getStock(card.id, 'normal');
-    const stockFoil = getStock(card.id, 'foil');
-    
-    const canBuyNormal = priceNormal && stockNormal > 0;
-    const canBuyFoil = priceFoil && stockFoil > 0;
-
-    return (
-      <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden shadow-md hover:shadow-xl hover:shadow-purple-900/20 transition-all border border-slate-700 flex flex-col text-sm group/card">
-        <div className="relative overflow-hidden bg-black aspect-[2.5/3.5] cursor-pointer" onClick={() => setSelectedCard(card)}>
-          <img src={getCardImage(card)} alt={card.name} loading="lazy" className="w-full h-full object-cover transform group-hover/card:scale-110 transition-transform duration-300"/>
-          {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
-          
-          {/* Overlay de "Ver Detalles" (Restaurado) */}
-          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/card:opacity-100 transition-opacity flex items-center justify-center">
-             <span className="bg-black/70 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 backdrop-blur-sm border border-white/20">
-                <Info size={12} /> Ver Detalles
-             </span>
-          </div>
-
-          {/* Badge de Stock Agotado Visual */}
-          {stockNormal === 0 && stockFoil === 0 && (
-            <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
-              <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase transform -rotate-12 border-2 border-white">Agotado</span>
-            </div>
-          )}
-        </div>
-        
-        <div className="p-2 flex flex-col flex-grow">
-          <h3 className="font-bold text-white leading-tight mb-0.5 truncate cursor-pointer hover:text-purple-400" onClick={() => setSelectedCard(card)}>{card.name}</h3>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-slate-400 text-[10px] uppercase tracking-wide truncate flex-1">{card.set_name}</span>
-            <span className={`w-2 h-2 rounded-full ${card.rarity === 'mythic' ? 'bg-orange-500' : card.rarity === 'rare' ? 'bg-yellow-400' : 'bg-slate-400'}`}></span>
-          </div>
-          
-          <div className="mt-auto space-y-1.5">
-            {/* Normal Row */}
-            <div className={`flex justify-between items-center px-2 py-1 rounded ${stockNormal > 0 ? 'bg-slate-900/50' : 'bg-slate-900/20 opacity-60'}`}>
-              <div className="flex flex-col">
-                <span className="text-slate-300 text-xs">Normal</span>
-                <span className={`text-[9px] ${stockNormal > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockNormal}</span>
-              </div>
-              {priceNormal ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-400 font-bold text-xs">${priceNormal}</span>
-                  <button onClick={() => addToCart(card, 'normal', priceNormal)} disabled={!canBuyNormal} className="p-1 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 rounded text-white transition-colors">
-                    <ShoppingCart size={12} />
-                  </button>
-                </div>
-              ) : <span className="text-slate-600 text-[10px]">--</span>}
-            </div>
-
-            {/* Foil Row */}
-            <div className={`flex justify-between items-center px-2 py-1 rounded border border-transparent ${stockFoil > 0 ? 'bg-gradient-to-r from-slate-900/50 to-purple-900/20 border-purple-500/30' : 'bg-slate-900/20 opacity-60'}`}>
-               <div className="flex flex-col">
-                  <div className="flex items-center gap-0.5">
-                    <Zap size={10} className="text-yellow-400" fill="currentColor" />
-                    <span className="text-purple-300 text-xs font-semibold">Foil</span>
-                  </div>
-                  <span className={`text-[9px] ${stockFoil > 0 ? 'text-green-400' : 'text-red-500'}`}>Stock: {stockFoil}</span>
-               </div>
-              {priceFoil ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-green-400 font-bold text-xs">${priceFoil}</span>
-                  <button onClick={() => addToCart(card, 'foil', priceFoil)} disabled={!canBuyFoil} className="p-1 bg-yellow-600 hover:bg-yellow-500 disabled:bg-slate-700 rounded text-white transition-colors">
-                    <ShoppingCart size={12} />
-                  </button>
-                </div>
-              ) : <span className="text-slate-600 text-[10px]">--</span>}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- NAV BAR ---
   const renderNavbar = () => (
     <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-lg">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between gap-4">
-        {/* Logo */}
-        <div className="flex items-center gap-2 cursor-pointer min-w-fit" onClick={() => { setView('store'); setQuery(''); fetchCards('format:commander year>=2021', false); }}>
+        <div className="flex items-center gap-2 cursor-pointer min-w-fit" onClick={() => { setView('store'); setQuery(''); fetchCards('format:commander year>=2022', false); }}>
           <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-xl shadow-glow">M</div>
           <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 hidden sm:block">MysticMarket</span>
         </div>
 
-        {/* Search & Filters (Sólo en vista Store) */}
         {(view === 'store') && (
           <div className="flex-1 max-w-xl relative group z-50" ref={wrapperRef}>
              <form onSubmit={(e) => { e.preventDefault(); selectSuggestion(query); }} className="flex gap-2">
@@ -809,17 +852,14 @@ export default function App() {
                 <input 
                   type="text" placeholder="Buscar..." 
                   className="w-full bg-slate-950 border border-slate-700 text-white rounded-l-full py-2 pl-4 focus:border-purple-500 outline-none"
-                  value={query} 
-                  onChange={handleQueryChange}
+                  value={query} onChange={handleQueryChange}
                   onFocus={() => query.length > 2 && setShowSuggestions(true)}
                 />
                 {showSuggestions && suggestions.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl overflow-hidden z-50">
                     <ul className="max-h-64 overflow-y-auto custom-scrollbar">
                       {suggestions.map((s, i) => (
-                        <li key={i}>
-                          <button onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-slate-300 border-b border-slate-800 last:border-0">{s}</button>
-                        </li>
+                        <li key={i}><button onClick={() => selectSuggestion(s)} className="w-full text-left px-4 py-2 hover:bg-slate-800 text-slate-300 border-b border-slate-800 last:border-0">{s}</button></li>
                       ))}
                     </ul>
                   </div>
@@ -830,7 +870,6 @@ export default function App() {
           </div>
         )}
 
-        {/* User Actions */}
         <div className="flex items-center gap-3">
           {user ? (
             <div className="flex items-center gap-3">
@@ -867,6 +906,13 @@ export default function App() {
       {renderNavbar()}
 
       <main className="container mx-auto px-4 py-8">
+        {!db && (
+          <div className="bg-red-500/20 border border-red-500 text-red-100 p-4 rounded-xl mb-6 text-center flex items-center justify-center gap-2">
+            <AlertTriangle size={24} />
+            <span>Atención: Configura tus credenciales de Firebase en el código para que la App funcione.</span>
+          </div>
+        )}
+
         {view === 'login' && renderLogin()}
         {view === 'admin-inventory' && renderAdminInventory()}
         {view === 'admin-orders' && renderAdminOrders()}
@@ -874,11 +920,9 @@ export default function App() {
         
         {view === 'store' && (
           <>
-            {/* Si es búsqueda y no hay resultados, o es la carga inicial */}
             {!loading && cards.length === 0 && (
                <div className="text-center py-12 text-slate-500">No se encontraron cartas.</div>
             )}
-            
             {loading ? (
               <div className="flex justify-center h-64 items-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500"></div></div>
             ) : (
@@ -889,18 +933,17 @@ export default function App() {
           </>
         )}
 
-        {/* ... (Reutilizamos la lógica del carrito/checkout/modal del código anterior) ... */}
         {view === 'success' && (
              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
                <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center mb-6 animate-bounce"><ShieldCheck size={48} className="text-white" /></div>
                <h2 className="text-4xl font-bold text-white mb-4">¡Orden Recibida!</h2>
-               <p className="mb-6 text-slate-400">El administrador preparará tu pedido.</p>
+               <p className="mb-6 text-slate-400">Tu pedido ha sido guardado y el stock actualizado.</p>
                <Button onClick={() => setView('store')} variant="primary" className="px-8 py-3 text-lg">Seguir Comprando</Button>
              </div>
         )}
       </main>
       
-      {/* Cart Sidebar */}
+      {/* Cart Sidebar (Mismo código de antes) */}
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsCartOpen(false)}></div>
@@ -946,7 +989,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal de Detalle de Carta (Restaurado) */}
       {renderCardModal()}
     </div>
   );
