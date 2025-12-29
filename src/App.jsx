@@ -17,7 +17,9 @@ import {
   updateDoc, deleteDoc, onSnapshot, serverTimestamp, writeBatch, query, orderBy 
 } from "firebase/firestore";
 
-// --- CONFIGURACIÓN DE FIREBASE ---
+// --- CONFIGURACIÓN ---
+const EXCHANGE_RATE = 7.5; // Tasa de cambio: $1 USD = Q7.5
+
 // ¡IMPORTANTE! Reemplaza estos valores con los de tu consola de Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyB3-ZfZpmJTbUvR9UeOFmn2F7oDnKz0WXQ",
@@ -104,7 +106,10 @@ export default function App() {
   const [inventory, setInventory] = useState({});
   const [orders, setOrders] = useState([]);
   const [permissionError, setPermissionError] = useState(false); 
-  const [lastOrderId, setLastOrderId] = useState(null); // Para mostrar en success
+  
+  // Estados para éxito de compra
+  const [lastOrderId, setLastOrderId] = useState(null); 
+  const [lastOrderTotal, setLastOrderTotal] = useState(0); 
   
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]); 
@@ -115,13 +120,12 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   
-  // Formulario extendido con teléfono
   const [checkoutForm, setCheckoutForm] = useState({ name: '', email: '', phone: '', address: '' });
   const [authForm, setAuthForm] = useState({ email: '', password: '', isRegister: false, error: '' });
 
   const wrapperRef = useRef(null);
 
-  // --- MANEJO DE HISTORIAL (BACK BUTTON) ---
+  // --- MANEJO DE HISTORIAL ---
   useEffect(() => {
     const handlePopState = (event) => {
       if (selectedCard) {
@@ -211,10 +215,11 @@ export default function App() {
           ...doc.data(),
           date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : new Date().toISOString()
         }));
+        
         if (user.role === 'admin') {
           setOrders(allOrders);
         } else {
-          setOrders(allOrders.filter(o => o.buyer.uid === user.uid || o.buyer.email === user.email));
+          setOrders(allOrders.filter(o => o.buyer?.uid === user.uid || o.buyer?.email === user.email));
         }
       }, (error) => {
         if (error.code === 'permission-denied') setPermissionError(true);
@@ -294,7 +299,8 @@ export default function App() {
     setLoading(true);
     try {
       const batch = writeBatch(db);
-      
+      const currentTotal = cart.reduce((acc, i) => acc + i.price * i.quantity, 0);
+
       for (const item of cart) {
         const ref = doc(db, "inventory", item.id);
         const snap = await getDoc(ref);
@@ -313,7 +319,7 @@ export default function App() {
           email: user?.email || checkoutForm.email 
         },
         items: cart,
-        total: cart.reduce((acc, i) => acc + i.price * i.quantity, 0),
+        total: currentTotal,
         status: 'pendiente'
       };
       
@@ -321,6 +327,8 @@ export default function App() {
       await batch.commit();
       
       setLastOrderId(orderRef.id);
+      setLastOrderTotal(currentTotal);
+      
       setCart([]);
       setView('success');
     } catch (e) {
@@ -407,7 +415,13 @@ export default function App() {
   // --- VISTAS ---
 
   const renderProductCard = (card) => {
-    const pNormal = card.prices?.usd, pFoil = card.prices?.usd_foil;
+    const pNormalUSD = card.prices?.usd;
+    const pFoilUSD = card.prices?.usd_foil;
+    
+    // CONVERSIÓN A QUETZALES
+    const pNormal = pNormalUSD ? parseFloat(pNormalUSD) * EXCHANGE_RATE : null;
+    const pFoil = pFoilUSD ? parseFloat(pFoilUSD) * EXCHANGE_RATE : null;
+
     const sNormal = getStock(card.id, 'normal'), sFoil = getStock(card.id, 'foil');
     
     const inCartNormal = cart.find(i => i.id === card.id && i.finish === 'normal')?.quantity || 0;
@@ -420,10 +434,8 @@ export default function App() {
       <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 flex flex-col group relative">
         <div className="relative aspect-[2.5/3.5] bg-black cursor-pointer" onClick={() => openCardModal(card)}>
           <img src={card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.normal} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="" />
-          {/* Badge de RL */}
           {card.reserved && <div className="absolute top-1 right-1 bg-yellow-600 text-black text-[10px] font-bold px-1.5 py-0.5 rounded">RL</div>}
           
-          {/* Agotado Overlay */}
           {sNormal === 0 && sFoil === 0 && (
             <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
               <span className="bg-red-600 text-white font-bold px-3 py-1 rounded text-xs uppercase -rotate-12 border-2 border-white">Agotado</span>
@@ -445,7 +457,7 @@ export default function App() {
               </div>
               {pNormal ? (
                 <div className="flex items-center gap-1.5">
-                  <span className="text-green-400 font-bold text-xs">${pNormal}</span>
+                  <span className="text-green-400 font-bold text-xs">Q{pNormal.toFixed(2)}</span>
                   <button 
                     onClick={() => addToCart(card, 'normal', pNormal)} 
                     disabled={disableNormal} 
@@ -470,7 +482,7 @@ export default function App() {
                </div>
               {pFoil ? (
                 <div className="flex items-center gap-1.5">
-                  <span className="text-green-400 font-bold text-xs">${pFoil}</span>
+                  <span className="text-green-400 font-bold text-xs">Q{pFoil.toFixed(2)}</span>
                   <button 
                     onClick={() => addToCart(card, 'foil', pFoil)} 
                     disabled={disableFoil} 
@@ -512,14 +524,14 @@ export default function App() {
                     </div>
                     <div className="text-right">
                       <p className="text-slate-300 text-xs">x{item.quantity}</p>
-                      <p className="text-white font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                      <p className="text-white font-bold">Q{(item.price * item.quantity).toFixed(2)}</p>
                     </div>
                 </div>
                 ))}
             </div>
             <div className="mt-6 pt-4 border-t border-slate-600 flex justify-between items-center text-xl font-bold text-white">
                 <span>Total</span>
-                <span className="text-green-400">${cartTotal.toFixed(2)}</span>
+                <span className="text-green-400">Q{cartTotal.toFixed(2)}</span>
             </div>
         </div>
         
@@ -545,7 +557,7 @@ export default function App() {
                 </div>
                 
                 <Button type="submit" variant="success" className="w-full mt-6 py-3" disabled={loading}>
-                  {loading ? 'Procesando...' : `Confirmar Pedido ($${cartTotal.toFixed(2)})`}
+                  {loading ? 'Procesando...' : `Confirmar Pedido (Q${cartTotal.toFixed(2)})`}
                 </Button>
                 <Button variant="secondary" onClick={() => setView('store')} className="w-full mt-2" type="button">Cancelar</Button>
             </form>
@@ -567,7 +579,7 @@ export default function App() {
         </p>
         
         <a 
-          href={`https://wa.me/50246903693?text=Hola, acabo de realizar la orden %23${lastOrderId}. Mi nombre es ${checkoutForm.name}. El total es $${cartTotal.toFixed(2)}. Quisiera coordinar el pago.`}
+          href={`https://wa.me/50246903693?text=Hola, acabo de realizar la orden %23${lastOrderId}. Mi nombre es ${checkoutForm.name}. El total es Q${lastOrderTotal.toFixed(2)}. Quisiera coordinar el pago.`}
           target="_blank" 
           rel="noopener noreferrer"
           className="w-full block"
@@ -582,7 +594,6 @@ export default function App() {
     </div>
   );
 
-  // ... (renderAdminOrders, renderAdminInventory, renderLogin, renderProfile son iguales) ...
   const renderAdminOrders = () => (
     <div className="max-w-6xl mx-auto p-4">
       <h2 className="text-3xl font-bold text-white mb-6 flex items-center gap-3"><ClipboardList className="text-purple-500" /> Órdenes Recientes</h2>
@@ -616,7 +627,7 @@ export default function App() {
                           <div className="flex-1 min-w-0">
                             <div className="flex justify-between">
                                <p className="text-white text-xs font-bold truncate">{item.name}</p>
-                               <span className="text-green-400 font-mono text-xs">${item.price}</span>
+                               <span className="text-green-400 font-mono text-xs">Q{item.price.toFixed(2)}</span>
                             </div>
                             <div className="flex items-center gap-2 mt-1">
                                <span className="text-[10px] text-slate-400">{item.set} #{item.collector_number}</span>
@@ -628,7 +639,7 @@ export default function App() {
                       ))}
                     </div>
                   </td>
-                  <td className="p-4 text-green-400 font-bold align-top">${order.total.toFixed(2)}</td>
+                  <td className="p-4 text-green-400 font-bold align-top">Q{order.total.toFixed(2)}</td>
                   <td className="p-4 align-top">
                     <select 
                       value={order.status}
@@ -723,8 +734,8 @@ export default function App() {
         <h2 className="text-2xl font-bold text-white mb-6 text-center">{authForm.isRegister ? "Crear Cuenta" : "Iniciar Sesión"}</h2>
         {authForm.error && <div className="bg-red-500/20 text-red-200 p-3 rounded mb-4 text-sm">{authForm.error}</div>}
         <form onSubmit={handleAuth} className="space-y-4">
-          <input type="email" placeholder="Email" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} required />
-          <input type="password" placeholder="Contraseña" className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
+          <input type="email" placeholder="Email" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.email} onChange={e => setAuthForm({...authForm, email: e.target.value})} required />
+          <input type="password" placeholder="Contraseña" className="w-full bg-slate-900 border border-slate-600 rounded p-2" value={authForm.password} onChange={e => setAuthForm({...authForm, password: e.target.value})} required />
           <Button type="submit" className="w-full">{authForm.isRegister ? "Registrarse" : "Entrar"}</Button>
         </form>
         <p className="text-center mt-4 text-sm cursor-pointer text-purple-400" onClick={() => setAuthForm({...authForm, isRegister: !authForm.isRegister, error: ''})}>
@@ -779,7 +790,7 @@ export default function App() {
                                 </div>
                                 <div className="text-right">
                                     <p className="text-sm text-slate-400">Total</p>
-                                    <p className="text-xl font-bold text-green-400">${order.total.toFixed(2)}</p>
+                                    <p className="text-xl font-bold text-green-400">Q{order.total.toFixed(2)}</p>
                                 </div>
                             </div>
 
@@ -799,7 +810,7 @@ export default function App() {
                                         </div>
                                         <div className="text-right">
                                             <span className="text-xs text-slate-400">x{item.quantity}</span>
-                                            <span className="block text-sm font-bold text-slate-300">${item.price}</span>
+                                            <span className="block text-sm font-bold text-slate-300">Q{item.price.toFixed(2)}</span>
                                         </div>
                                     </div>
                                 ))}
@@ -920,7 +931,7 @@ export default function App() {
                           className="w-6 h-6 flex items-center justify-center hover:bg-slate-700 text-slate-300 rounded disabled:opacity-30 disabled:cursor-not-allowed"
                         >+</button>
                       </div>
-                      <p className="text-green-400 text-sm font-bold">${(item.price * item.quantity).toFixed(2)}</p>
+                      <p className="text-green-400 text-sm font-bold">Q{(item.price * item.quantity).toFixed(2)}</p>
                     </div>
                   </div>
                   <button onClick={() => setCart(c => c.filter((_, idx) => idx !== i))} className="text-red-500 self-start"><Trash2 size={16}/></button>
@@ -930,7 +941,7 @@ export default function App() {
             <div className="pt-4 border-t border-slate-700">
               <div className="flex justify-between text-white font-bold mb-4 text-xl">
                 <span>Total</span>
-                <span>${cart.reduce((a,c) => a + c.price * c.quantity, 0).toFixed(2)}</span>
+                <span>Q{cart.reduce((a,c) => a + c.price * c.quantity, 0).toFixed(2)}</span>
               </div>
               {user ? (
                 <Button className="w-full py-3" onClick={() => { setIsCartOpen(false); setView('checkout'); }}>Completar Pedido</Button>
@@ -981,7 +992,9 @@ export default function App() {
                          )}
                       </div>
                       <div className="flex items-center gap-2">
-                         <span className="text-xl font-bold text-white">${selectedCard.prices?.usd || '--'}</span>
+                         <span className="text-xl font-bold text-white">
+                            {selectedCard.prices?.usd ? `Q${(parseFloat(selectedCard.prices.usd) * EXCHANGE_RATE).toFixed(2)}` : '--'}
+                         </span>
                          <Button 
                             disabled={!selectedCard.prices?.usd || getStock(selectedCard.id, 'normal') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'normal')?.quantity || 0) && user?.role !== 'admin'} 
                             onClick={() => addToCart(selectedCard, 'normal', selectedCard.prices?.usd)}
@@ -1001,7 +1014,9 @@ export default function App() {
                          )}
                       </div>
                       <div className="flex items-center gap-2">
-                         <span className="text-xl font-bold text-purple-200">${selectedCard.prices?.usd_foil || '--'}</span>
+                         <span className="text-xl font-bold text-purple-200">
+                            {selectedCard.prices?.usd_foil ? `Q${(parseFloat(selectedCard.prices.usd_foil) * EXCHANGE_RATE).toFixed(2)}` : '--'}
+                         </span>
                          <Button 
                             variant="secondary" 
                             disabled={!selectedCard.prices?.usd_foil || getStock(selectedCard.id, 'foil') <= (cart.find(i => i.id === selectedCard.id && i.finish === 'foil')?.quantity || 0) && user?.role !== 'admin'} 
